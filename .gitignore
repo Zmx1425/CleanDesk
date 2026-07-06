@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+logs/
+config.json
+*.log
+CleanDesk_*_Test*/
+archive/
+release/
+releases/*/*.zip
