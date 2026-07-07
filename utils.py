@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -51,3 +52,40 @@ def resolve_target_folder(monitored_folder: str | Path, configured_target: str |
     if target.is_absolute():
         return target.resolve()
     return (base / safe_folder_part(raw_target)).resolve()
+
+
+def normalize_folder_path(path: str | Path) -> str:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return ""
+    try:
+        return str(Path(raw_path).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError):
+        return os.path.abspath(os.path.normpath(os.path.expanduser(raw_path)))
+
+
+def folder_compare_key(path: str | Path) -> str:
+    normalized_path = normalize_folder_path(path)
+    if not normalized_path:
+        return ""
+    return os.path.normcase(os.path.abspath(os.path.normpath(normalized_path)))
+
+
+def folder_display_name(path: str | Path) -> str:
+    normalized_path = normalize_folder_path(path)
+    name = Path(normalized_path).name if normalized_path else ""
+    return name or "文件夹"
+
+
+def is_same_or_nested_folder(candidate: str | Path, existing: str | Path) -> bool:
+    candidate_key = folder_compare_key(candidate)
+    existing_key = folder_compare_key(existing)
+    if not candidate_key or not existing_key:
+        return False
+    if candidate_key == existing_key:
+        return True
+    try:
+        common = os.path.commonpath([candidate_key, existing_key])
+    except (ValueError, OSError):
+        return False
+    return common in {candidate_key, existing_key}

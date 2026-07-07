@@ -14,7 +14,15 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from engine import FileOrganizerEngine
 from rules import assign_rule_priorities, display_rule_name, find_matching_rule, normalize_rules, sort_rules
 from storage import ConfigStorage
-from utils import configure_logging, is_hidden_or_temp_file, timestamp
+from utils import (
+    configure_logging,
+    folder_compare_key,
+    folder_display_name,
+    is_hidden_or_temp_file,
+    is_same_or_nested_folder,
+    normalize_folder_path,
+    timestamp,
+)
 from watcher import FolderWatcher
 
 
@@ -231,7 +239,9 @@ class CleanDeskService(QObject):
         self.storage = ConfigStorage()
         self.config = self.storage.load()
         self.rules = assign_rule_priorities(sort_rules(normalize_rules(self.config.get("rules", []))))
-        self.monitored_folder = self.config.get("monitored_folder") or str(Path.home() / "Downloads")
+        self.monitored_folders = [dict(folder) for folder in self.config.get("monitored_folders", [])]
+        self.active_folder_id = str(self.config.get("active_folder_id") or "")
+        self.monitored_folder = self.get_active_folder_path()
         self.is_running = False
         self.recent_logs: deque[str] = deque(maxlen=300)
         self.undo_stack: list[dict[str, Any]] = []
@@ -259,27 +269,91 @@ class CleanDeskService(QObject):
         self._persist_config()
         self.logger.info("CleanDesk ready")
 
+    def get_monitored_folders(self) -> list[dict[str, Any]]:
+        return [dict(folder) for folder in self.monitored_folders]
+
+    def get_active_folder(self) -> dict[str, Any] | None:
+        return next((dict(folder) for folder in self.monitored_folders if folder.get("id") == self.active_folder_id), None)
+
+    def get_active_folder_path(self) -> str:
+        active_folder = next((folder for folder in self.monitored_folders if folder.get("id") == self.active_folder_id), None)
+        return str(active_folder.get("path", "")) if active_folder else ""
+
+    def set_active_folder(self, folder_id: str) -> dict[str, Any]:
+        if self.is_running:
+            raise ValueError("请先停止自动整理后再管理监控文件夹。")
+        folder = next((folder for folder in self.monitored_folders if folder.get("id") == folder_id), None)
+        if not folder:
+            raise ValueError("未找到要选择的监控文件夹。")
+        self.active_folder_id = str(folder["id"])
+        self.monitored_folder = str(folder["path"])
+        self._persist_config()
+        self.folder_changed.emit(self.monitored_folder)
+        self.logger.info("Active monitored folder changed to %s", self.monitored_folder)
+        return dict(folder)
+
+    def add_monitored_folder(self, path: str) -> dict[str, Any]:
+        if self.is_running:
+            raise ValueError("请先停止自动整理后再管理监控文件夹。")
+        normalized_path = self._validate_monitored_folder_path(path)
+        folder = {
+            "id": uuid4().hex,
+            "path": normalized_path,
+            "display_name": folder_display_name(normalized_path),
+        }
+        self.monitored_folders.append(folder)
+        if not self.active_folder_id:
+            self.active_folder_id = folder["id"]
+            self.monitored_folder = folder["path"]
+            self.folder_changed.emit(self.monitored_folder)
+        self._persist_config()
+        self.logger.info("Monitored folder added: %s", normalized_path)
+        return dict(folder)
+
+    def remove_monitored_folder(self, folder_id: str) -> None:
+        if self.is_running:
+            raise ValueError("请先停止自动整理后再管理监控文件夹。")
+        original_count = len(self.monitored_folders)
+        self.monitored_folders = [folder for folder in self.monitored_folders if folder.get("id") != folder_id]
+        if len(self.monitored_folders) == original_count:
+            raise ValueError("未找到要移除的监控文件夹。")
+        if self.active_folder_id == folder_id:
+            self.active_folder_id = str(self.monitored_folders[0]["id"]) if self.monitored_folders else ""
+            self.monitored_folder = self.get_active_folder_path()
+            self.folder_changed.emit(self.monitored_folder)
+        self._persist_config()
+        self.logger.info("Monitored folder removed: %s", folder_id)
+
     def set_monitored_folder(self, folder: str) -> None:
-        folder_path = Path(folder).expanduser()
+        if self.is_running:
+            self.error_occurred.emit("请先停止自动整理后再管理监控文件夹。")
+            return
         try:
-            folder_path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            self.error_occurred.emit(f"Unable to use this folder: {exc}")
+            normalized_path = self._validate_monitored_folder_path(folder, exclude_folder_id=self.active_folder_id or None)
+        except ValueError as exc:
+            self.error_occurred.emit(str(exc))
             self.logger.exception("Failed to set monitored folder")
             return
 
-        was_running = self.is_running
-        if was_running:
-            self.stop()
+        if self.active_folder_id:
+            for monitored_folder in self.monitored_folders:
+                if monitored_folder.get("id") == self.active_folder_id:
+                    monitored_folder["path"] = normalized_path
+                    monitored_folder["display_name"] = folder_display_name(normalized_path)
+                    break
+        else:
+            created_folder = {
+                "id": uuid4().hex,
+                "path": normalized_path,
+                "display_name": folder_display_name(normalized_path),
+            }
+            self.monitored_folders.append(created_folder)
+            self.active_folder_id = created_folder["id"]
 
-        self.monitored_folder = str(folder_path)
-        self.config["monitored_folder"] = self.monitored_folder
+        self.monitored_folder = normalized_path
         self._persist_config()
         self.folder_changed.emit(self.monitored_folder)
         self.logger.info("Monitored folder changed to %s", self.monitored_folder)
-
-        if was_running:
-            self.start()
 
     @Slot()
     def start(self) -> None:
@@ -629,24 +703,56 @@ class CleanDeskService(QObject):
         self.logger.removeHandler(self.qt_log_handler)
 
     def _ensure_folder_ready(self) -> bool:
+        if not self.monitored_folder:
+            self.error_occurred.emit("请先选择监控文件夹。")
+            self.logger.error("Folder check failed: no active monitored folder")
+            return False
+
         folder = Path(self.monitored_folder)
         if not folder.exists():
-            try:
-                folder.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                self.error_occurred.emit(f"Unable to create monitored folder: {exc}")
-                self.logger.exception("Failed to create monitored folder")
-                return False
+            self.error_occurred.emit("当前监控文件夹不存在。")
+            self.logger.error("Folder does not exist: %s", folder)
+            return False
+        if not folder.is_dir():
+            self.error_occurred.emit("当前监控路径不是文件夹。")
+            self.logger.error("Monitored path is not a folder: %s", folder)
+            return False
         if not os.access(folder, os.R_OK | os.W_OK):
-            self.error_occurred.emit("The selected folder is not readable and writable.")
+            self.error_occurred.emit("当前监控文件夹不可读写。")
             self.logger.error("Folder permission check failed: %s", folder)
             return False
         return True
 
     def _persist_config(self) -> None:
+        self.monitored_folder = self.get_active_folder_path()
+        self.config["monitored_folders"] = self.get_monitored_folders()
+        self.config["active_folder_id"] = self.active_folder_id
         self.config["monitored_folder"] = self.monitored_folder
         self.config["rules"] = assign_rule_priorities(self.rules)
         self.storage.save(self.config)
+
+    def _validate_monitored_folder_path(self, path: str, exclude_folder_id: str | None = None) -> str:
+        normalized_path = normalize_folder_path(path)
+        if not normalized_path:
+            raise ValueError("请选择有效的监控文件夹。")
+
+        folder_path = Path(normalized_path)
+        if not folder_path.exists() or not folder_path.is_dir():
+            raise ValueError("监控文件夹不存在或不是文件夹。")
+
+        candidate_key = folder_compare_key(normalized_path)
+        for folder in self.monitored_folders:
+            if exclude_folder_id and folder.get("id") == exclude_folder_id:
+                continue
+            existing_path = str(folder.get("path", ""))
+            if not existing_path:
+                continue
+            if candidate_key == folder_compare_key(existing_path):
+                raise ValueError("这个文件夹已经在监控列表中。")
+            if is_same_or_nested_folder(normalized_path, existing_path):
+                raise ValueError("不能同时监控父文件夹和它的子文件夹。")
+
+        return normalized_path
 
     def _create_pending_batch(self) -> str:
         batch_id = uuid4().hex
