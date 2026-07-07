@@ -59,7 +59,7 @@ class FileProcessingWorker(QThread):
         super().__init__()
         self.engine = engine
         self.logger = logger
-        self.jobs: queue.Queue[tuple[str, str, list[dict], str, str]] = queue.Queue()
+        self.jobs: queue.Queue[dict[str, Any]] = queue.Queue()
         self.stop_requested = threading.Event()
         self.recent_paths: dict[str, float] = {}
         self.recent_lock = threading.Lock()
@@ -76,6 +76,8 @@ class FileProcessingWorker(QThread):
         batch_id: str = "",
         mode: str = "auto",
         force: bool = False,
+        folder_id: str = "",
+        folder_name: str = "",
     ) -> bool:
         normalized_path = str(Path(file_path))
         now = time.monotonic()
@@ -87,7 +89,18 @@ class FileProcessingWorker(QThread):
                     self.logger.info("Duplicate file event ignored: %s", Path(normalized_path).name)
                     return False
                 self.recent_paths[normalized_path] = now
-        self.jobs.put((normalized_path, base_folder, [dict(rule) for rule in rules], batch_id, mode))
+        self.jobs.put(
+            {
+                "file_path": normalized_path,
+                "base_folder": base_folder,
+                "source_root": base_folder,
+                "folder_id": folder_id,
+                "folder_name": folder_name,
+                "rules": [dict(rule) for rule in rules],
+                "batch_id": batch_id,
+                "mode": mode,
+            }
+        )
         return True
 
     def resolve_conflict(self, request_id: str, action: str) -> None:
@@ -105,17 +118,23 @@ class FileProcessingWorker(QThread):
     def run(self) -> None:
         while not self.stop_requested.is_set():
             try:
-                file_path, base_folder, rules, batch_id, mode = self.jobs.get(timeout=0.2)
+                job = self.jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
-                self._process_with_retry(file_path, base_folder, rules, batch_id, mode)
+                self._process_with_retry(job)
             finally:
+                batch_id = str(job.get("batch_id", ""))
                 if batch_id:
                     self.batch_job_finished.emit(batch_id)
                 self.jobs.task_done()
 
-    def _process_with_retry(self, file_path: str, base_folder: str, rules: list[dict], batch_id: str, mode: str) -> None:
+    def _process_with_retry(self, job: dict[str, Any]) -> None:
+        file_path = str(job.get("file_path", ""))
+        base_folder = str(job.get("base_folder", ""))
+        rules = [dict(rule) for rule in job.get("rules", [])]
+        batch_id = str(job.get("batch_id", ""))
+        mode = str(job.get("mode", "auto"))
         if batch_id and batch_id in self.canceled_batches:
             return
         path = Path(file_path)
@@ -138,7 +157,7 @@ class FileProcessingWorker(QThread):
             if not matched_rule:
                 self.engine.process_file(str(path), base_folder, rules)
                 return
-            status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode)
+            status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode, job)
             if status in {"moved", "conflict_skipped", "canceled", "no_match"}:
                 return
             if attempt < len(delays) + 1:
@@ -152,10 +171,11 @@ class FileProcessingWorker(QThread):
         batch_id: str,
         matched_rule: dict,
         mode: str,
+        job: dict[str, Any],
     ) -> str:
         original_path = path.resolve()
         resolver = None
-        if mode == "manual":
+        if mode in {"manual", "start_scan"}:
             resolver = lambda conflict: self._request_conflict_choice(conflict, batch_id)
         result = self.engine.process_file_result(str(path), base_folder, rules, resolver)
         status = str(result.get("status", "failed"))
@@ -168,6 +188,9 @@ class FileProcessingWorker(QThread):
                     "batch_id": batch_id,
                     "filename": path.name,
                     "reason": "因为目标位置存在同名文件，已跳过。",
+                    "folder_id": str(job.get("folder_id", "")),
+                    "folder_name": str(job.get("folder_name", "")),
+                    "source_root": str(job.get("source_root", base_folder)),
                 }
             )
             return status
@@ -178,6 +201,7 @@ class FileProcessingWorker(QThread):
         target_relative = str(result.get("target_display") or target_path.name)
         conflict = bool(result.get("conflict"))
         final_name = str(result.get("final_name") or target_path.name)
+        self._remember_recent_path(str(target_path))
         if mode == "auto" and conflict:
             self.conflict_hint_requested.emit(f"检测到同名文件，已保留为 {final_name}")
         self.file_moved.emit(
@@ -192,6 +216,9 @@ class FileProcessingWorker(QThread):
                 "conflict": conflict,
                 "final_name": final_name,
                 "mode": mode,
+                "folder_id": str(job.get("folder_id", "")),
+                "folder_name": str(job.get("folder_name", "")),
+                "source_root": str(job.get("source_root", base_folder)),
             }
         )
         return status
@@ -220,6 +247,12 @@ class FileProcessingWorker(QThread):
         ]
         for path in expired:
             self.recent_paths.pop(path, None)
+
+    def _remember_recent_path(self, file_path: str) -> None:
+        with self.recent_lock:
+            now = time.monotonic()
+            self._clear_old_paths(now)
+            self.recent_paths[str(Path(file_path))] = now
 
 
 class CleanDeskService(QObject):
@@ -359,19 +392,23 @@ class CleanDeskService(QObject):
     def start(self) -> None:
         if self.is_running:
             return
-        if not self._ensure_folder_ready():
+        valid_folders = self._valid_monitored_folders(emit_activity=True)
+        if not valid_folders:
+            self.error_occurred.emit("没有可用的监控文件夹。")
+            self.logger.error("Start skipped, no valid monitored folders")
             return
         self.logger.info("正在启动监听")
         batch_id = self._create_pending_batch()
-        queued = self._queue_existing_files(batch_id)
+        queued = self._queue_existing_files_for_folders(batch_id, valid_folders, mode="start_scan")
         if queued:
             self.logger.info("启动前扫描：发现 %s 个已有文件", queued)
         else:
             self.pending_undo_batches.pop(batch_id, None)
             self.logger.info("启动前扫描：未发现待处理文件")
         try:
-            self.watcher.start(self.monitored_folder)
+            self.watcher.start(valid_folders)
         except RuntimeError as exc:
+            self.pending_undo_batches.pop(batch_id, None)
             self.error_occurred.emit(str(exc))
             self.logger.exception("Unable to start watcher")
             return
@@ -399,15 +436,31 @@ class CleanDeskService(QObject):
             self.pending_undo_batches.pop(batch_id, None)
         self.logger.info("Manual scan queued, %s file(s) found", queued)
 
-    @Slot(str)
-    def process_file(self, file_path: str) -> None:
-        if not file_path:
+    @Slot(object)
+    def process_file(self, event: object) -> None:
+        payload = self._event_payload(event)
+        file_path = str(payload.get("file_path", ""))
+        source_root = str(payload.get("source_root", ""))
+        folder_id = str(payload.get("folder_id", ""))
+        folder_name = str(payload.get("display_name", ""))
+        if not file_path or not source_root:
+            return
+        if folder_id and folder_id not in {str(folder.get("id", "")) for folder in self.monitored_folders}:
+            self.logger.info("Watcher event ignored for removed folder: %s", file_path)
             return
         if self._should_ignore_file_event(file_path):
             return
         batch_id = self._create_pending_batch()
         self._set_pending_batch_total(batch_id, 1)
-        if self.worker.enqueue(file_path, self.monitored_folder, self.rules, batch_id):
+        if self.worker.enqueue(
+            file_path,
+            source_root,
+            self.rules,
+            batch_id,
+            mode="auto",
+            folder_id=folder_id,
+            folder_name=folder_name,
+        ):
             return
         else:
             self.pending_undo_batches.pop(batch_id, None)
@@ -417,15 +470,36 @@ class CleanDeskService(QObject):
         self.worker.resolve_conflict(request_id, action)
 
     def _queue_existing_files(self, batch_id: str, mode: str = "manual") -> int:
+        active_folder = self.get_active_folder()
+        if not active_folder:
+            self._set_pending_batch_total(batch_id, 0)
+            return 0
+        return self._queue_existing_files_for_folders(batch_id, [active_folder], mode=mode)
+
+    def _queue_existing_files_for_folders(self, batch_id: str, folders: list[dict], mode: str = "manual") -> int:
         queued = 0
-        files = [
-            item
-            for item in Path(self.monitored_folder).iterdir()
-            if item.is_file() and not self._should_ignore_file_event(str(item))
-        ]
-        self._set_pending_batch_total(batch_id, len(files))
-        for item in files:
-            if self.worker.enqueue(str(item), self.monitored_folder, self.rules, batch_id, mode, force=True):
+        jobs: list[tuple[Path, dict]] = []
+        for folder in folders:
+            base_folder = str(folder.get("path", ""))
+            if not base_folder:
+                continue
+            for item in Path(base_folder).iterdir():
+                if item.is_file() and not self._should_ignore_file_event(str(item)):
+                    jobs.append((item, folder))
+
+        self._set_pending_batch_total(batch_id, len(jobs))
+        for item, folder in jobs:
+            base_folder = str(folder.get("path", ""))
+            if self.worker.enqueue(
+                str(item),
+                base_folder,
+                self.rules,
+                batch_id,
+                mode,
+                force=True,
+                folder_id=str(folder.get("id", "")),
+                folder_name=str(folder.get("display_name", "")),
+            ):
                 queued += 1
             else:
                 self._finish_batch_job(batch_id)
@@ -608,6 +682,8 @@ class CleanDeskService(QObject):
                 filename = str(item.get("filename", "文件"))
                 target_path = Path(str(item.get("target_path", "")))
                 original_path = Path(str(item.get("original_path", "")))
+                source_folder_name = str(item.get("folder_name", ""))
+                source_root = str(item.get("source_root", ""))
                 self._ignore_restored_path(original_path)
                 try:
                     if not target_path.exists():
@@ -619,6 +695,8 @@ class CleanDeskService(QObject):
                                 "status": "error",
                                 "title": f"撤销失败：{filename}",
                                 "detail": "文件可能已被移动或删除",
+                                "source_folder_name": source_folder_name,
+                                "source_root": source_root,
                             }
                         )
                         continue
@@ -644,6 +722,8 @@ class CleanDeskService(QObject):
                                     "status": "error",
                                     "title": f"撤销失败：{filename}",
                                     "detail": "因为原位置存在同名文件，已跳过。",
+                                    "source_folder_name": source_folder_name,
+                                    "source_root": source_root,
                                 }
                             )
                             continue
@@ -664,6 +744,8 @@ class CleanDeskService(QObject):
                             "detail": f"已移回 {self._display_path(destination)}",
                             "target_path": str(destination),
                             "target_folder": str(destination.parent),
+                            "source_folder_name": source_folder_name,
+                            "source_root": source_root,
                         }
                     )
                 except Exception:
@@ -675,6 +757,8 @@ class CleanDeskService(QObject):
                             "status": "error",
                             "title": f"撤销失败：{filename}",
                             "detail": "恢复文件时遇到问题",
+                            "source_folder_name": source_folder_name,
+                            "source_root": source_root,
                         }
                     )
 
@@ -722,6 +806,55 @@ class CleanDeskService(QObject):
             self.logger.error("Folder permission check failed: %s", folder)
             return False
         return True
+
+    def _valid_monitored_folders(self, emit_activity: bool = False) -> list[dict[str, Any]]:
+        valid_folders = []
+        for folder in self.monitored_folders:
+            prepared = dict(folder)
+            path_text = str(prepared.get("path", ""))
+            display_name = str(prepared.get("display_name") or folder_display_name(path_text))
+            path = Path(path_text)
+            if path.exists() and path.is_dir() and os.access(path, os.R_OK | os.W_OK):
+                prepared["path"] = str(path)
+                prepared["display_name"] = display_name
+                valid_folders.append(prepared)
+                continue
+
+            self.logger.warning("Monitored folder skipped because it is unavailable: %s", path_text)
+            if emit_activity:
+                self.activity_emitted.emit(
+                    {
+                        "time": timestamp()[11:16],
+                        "status": "skipped",
+                        "title": f"文件夹暂时不可用：{display_name}",
+                        "detail": "已跳过这个文件夹，其他可用文件夹会继续运行。",
+                        "source_folder_name": display_name,
+                        "source_root": path_text,
+                    }
+                )
+        return valid_folders
+
+    def _event_payload(self, event: object) -> dict[str, str]:
+        if isinstance(event, dict):
+            payload = {
+                "file_path": str(event.get("file_path", "")),
+                "folder_id": str(event.get("folder_id", "")),
+                "source_root": str(event.get("source_root", "")),
+                "display_name": str(event.get("display_name", "")),
+            }
+        else:
+            active_folder = self.get_active_folder() or {}
+            payload = {
+                "file_path": str(event or ""),
+                "folder_id": str(active_folder.get("id", "")),
+                "source_root": str(active_folder.get("path", self.monitored_folder)),
+                "display_name": str(active_folder.get("display_name", "")),
+            }
+
+        source_root = payload["source_root"]
+        if not payload["display_name"]:
+            payload["display_name"] = folder_display_name(source_root)
+        return payload
 
     def _persist_config(self) -> None:
         self.monitored_folder = self.get_active_folder_path()
@@ -771,6 +904,9 @@ class CleanDeskService(QObject):
             "filename": str(move.get("filename", "")),
             "original_path": str(move.get("original_path", "")),
             "target_path": str(move.get("target_path", "")),
+            "folder_id": str(move.get("folder_id", "")),
+            "folder_name": str(move.get("folder_name", "")),
+            "source_root": str(move.get("source_root", "")),
         }
         batch = self.pending_undo_batches.get(batch_id)
         if batch is not None:
@@ -790,6 +926,8 @@ class CleanDeskService(QObject):
                 "target_path": item["target_path"],
                 "target_folder": str(Path(item["target_path"]).parent),
                 "rule_name": str(move.get("rule_name") or "默认规则"),
+                "source_folder_name": item["folder_name"],
+                "source_root": item["source_root"],
             }
         )
 
@@ -801,6 +939,8 @@ class CleanDeskService(QObject):
                 "status": "skipped",
                 "title": f"未整理：{skip.get('filename', '文件')}",
                 "detail": str(skip.get("reason") or "已跳过。"),
+                "source_folder_name": str(skip.get("folder_name", "")),
+                "source_root": str(skip.get("source_root", "")),
             }
         )
 
@@ -848,6 +988,14 @@ class CleanDeskService(QObject):
         return "keep"
 
     def _display_path(self, path: Path) -> str:
+        for folder in self.monitored_folders:
+            root = str(folder.get("path", ""))
+            if not root:
+                continue
+            try:
+                return str(path.relative_to(Path(root)))
+            except ValueError:
+                continue
         try:
             return str(path.relative_to(Path(self.monitored_folder)))
         except ValueError:
