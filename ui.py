@@ -51,6 +51,12 @@ class MainWindow(QMainWindow):
         self._status_hint_token = 0
 
         self.path_label = QLabel()
+        self.folder_title_label = QLabel()
+        self.folder_caption_label = QLabel()
+        self.folder_list = QListWidget()
+        self.folder_empty_widget = QWidget()
+        self.folder_add_button = QPushButton("+ 添加文件夹")
+        self.folder_remove_button = QPushButton("移除当前文件夹")
         self.status_badge = QLabel()
         self.status_hint = QLabel()
         self.rules_list = QListWidget()
@@ -227,26 +233,55 @@ class MainWindow(QMainWindow):
         card = self._card(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = self._card_layout(card)
 
-        path_row = QHBoxLayout()
-        path_row.setContentsMargins(0, 0, 0, 0)
-        path_row.setSpacing(SPACING)
+        self.folder_title_label = self._label("监控文件夹（0）", "cardTitle")
+        self.folder_caption_label = self._label(
+            "选择当前要整理的文件夹；开始自动整理后会监听所有文件夹。",
+            "caption",
+            wrap=True,
+        )
 
-        self.path_label.setObjectName("pathLabel")
-        self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.path_label.setFixedHeight(BUTTON_HEIGHT)
-        self.path_label.setMinimumWidth(0)
-        self.path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.folder_list.setObjectName("folderList")
+        self.folder_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.folder_list.setFocusPolicy(Qt.NoFocus)
+        self.folder_list.setUniformItemSizes(False)
+        self.folder_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.folder_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.folder_list.setResizeMode(QListWidget.Adjust)
+        self.folder_list.setWordWrap(True)
+        self.folder_list.setMinimumHeight(128)
+        self.folder_list.setMinimumWidth(0)
+        self.folder_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.folder_list.itemClicked.connect(self._select_folder_item)
 
-        change_button = self._button("更改", "secondaryButton")
-        change_button.setFixedWidth(80)
-        change_button.clicked.connect(self._choose_folder)
+        self.folder_empty_widget.setObjectName("folderEmptyState")
+        empty_layout = QVBoxLayout(self.folder_empty_widget)
+        empty_layout.setContentsMargins(12, 18, 12, 18)
+        empty_layout.setSpacing(6)
+        empty_title = QLabel("还没有添加监控文件夹")
+        empty_title.setObjectName("emptyStateTitle")
+        empty_title.setAlignment(Qt.AlignCenter)
+        empty_hint = QLabel("点击“添加文件夹”开始使用。")
+        empty_hint.setObjectName("emptyStateHint")
+        empty_hint.setAlignment(Qt.AlignCenter)
+        empty_hint.setWordWrap(True)
+        empty_layout.addWidget(empty_title)
+        empty_layout.addWidget(empty_hint)
 
-        path_row.addWidget(self.path_label, 1)
-        path_row.addWidget(change_button, 0)
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        self._prepare_button(self.folder_add_button, "secondaryButton")
+        self._prepare_button(self.folder_remove_button, "secondaryButton")
+        self.folder_add_button.clicked.connect(self._add_monitored_folder)
+        self.folder_remove_button.clicked.connect(self._confirm_remove_active_folder)
+        action_row.addWidget(self.folder_add_button)
+        action_row.addWidget(self.folder_remove_button)
 
-        layout.addWidget(self._label("监控文件夹", "cardTitle"))
-        layout.addWidget(self._label("CleanDesk 会监听此位置的新文件。", "caption", wrap=True))
-        layout.addLayout(path_row)
+        layout.addWidget(self.folder_title_label)
+        layout.addWidget(self.folder_caption_label)
+        layout.addWidget(self.folder_empty_widget)
+        layout.addWidget(self.folder_list)
+        layout.addLayout(action_row)
         return card
 
     def _rules_card(self) -> QFrame:
@@ -469,6 +504,100 @@ class MainWindow(QMainWindow):
         if folder:
             self.service.set_monitored_folder(folder)
 
+    def _folder_dialog_start_path(self) -> str:
+        active_path = str(getattr(self.service, "monitored_folder", "") or "")
+        if active_path and Path(active_path).expanduser().exists():
+            return active_path
+        desktop = Path.home() / "Desktop"
+        return str(desktop if desktop.exists() else Path.home())
+
+    def _add_monitored_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "选择监控文件夹", self._folder_dialog_start_path())
+        if not folder:
+            return
+        try:
+            self.service.add_monitored_folder(folder)
+        except ValueError as exc:
+            QMessageBox.warning(self, "CleanDesk", str(exc))
+            return
+        self._refresh_folder_list()
+
+    def _select_folder_item(self, item: QListWidgetItem) -> None:
+        folder_id = str(item.data(Qt.UserRole) or "")
+        if not folder_id:
+            return
+        try:
+            self.service.set_active_folder(folder_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "CleanDesk", str(exc))
+            self._refresh_folder_list()
+            return
+        self._refresh_folder_list()
+
+    def _confirm_remove_active_folder(self) -> None:
+        folder = self._active_folder()
+        if not folder:
+            self._refresh_folder_list()
+            return
+        folder_name = str(folder.get("display_name") or "文件夹")
+        box = QMessageBox(self)
+        box.setWindowTitle("移除监控文件夹")
+        box.setText(f"确定要移除“{folder_name}”吗？\n\n这不会删除文件夹或其中的文件，只会停止 CleanDesk 管理它。")
+        remove_button = box.addButton("移除", QMessageBox.DestructiveRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(remove_button)
+        box.exec()
+        if box.clickedButton() != remove_button:
+            return
+        try:
+            self.service.remove_monitored_folder(str(folder.get("id", "")))
+        except ValueError as exc:
+            QMessageBox.warning(self, "CleanDesk", str(exc))
+            return
+        self._refresh_folder_list()
+
+    def _active_folder(self) -> dict | None:
+        if hasattr(self.service, "get_active_folder"):
+            return self.service.get_active_folder()
+        folder_path = str(getattr(self.service, "monitored_folder", "") or "")
+        return {"id": "", "path": folder_path, "display_name": Path(folder_path).name} if folder_path else None
+
+    def _monitored_folders(self) -> list[dict]:
+        if hasattr(self.service, "get_monitored_folders"):
+            return self.service.get_monitored_folders()
+        active = self._active_folder()
+        return [active] if active else []
+
+    def _refresh_folder_list(self) -> None:
+        folders = self._monitored_folders()
+        active_folder = self._active_folder() or {}
+        active_id = str(active_folder.get("id", ""))
+        running = bool(getattr(self.service, "is_running", False))
+
+        self.folder_title_label.setText(f"监控文件夹（{len(folders)}）")
+        self.folder_caption_label.setText(
+            "自动整理运行中。停止后可管理监控文件夹。"
+            if running
+            else "选择当前要整理的文件夹；开始自动整理后会监听所有文件夹。"
+        )
+        self.folder_list.clear()
+        for folder in folders:
+            item = QListWidgetItem()
+            folder_id = str(folder.get("id", ""))
+            item.setData(Qt.UserRole, folder_id)
+            row = FolderListItem(folder, active=(folder_id == active_id))
+            item.setSizeHint(row.sizeHint())
+            self.folder_list.addItem(item)
+            self.folder_list.setItemWidget(item, row)
+            if folder_id == active_id:
+                self.folder_list.setCurrentItem(item)
+
+        has_folders = bool(folders)
+        self.folder_empty_widget.setVisible(not has_folders)
+        self.folder_list.setVisible(has_folders)
+        self.folder_add_button.setEnabled(not running)
+        self.folder_remove_button.setEnabled(has_folders and not running and bool(active_id))
+
     def _add_rule(self) -> None:
         dialog = RuleDialog(self, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
         if dialog.exec() == QDialog.Accepted:
@@ -608,6 +737,7 @@ class MainWindow(QMainWindow):
         self.path_label.setText(display)
         self.path_label.setToolTip(display)
         self.suggestion_button.setEnabled(bool(folder) and Path(folder).expanduser().exists())
+        self._refresh_folder_list()
 
     def _set_status(self, running: bool) -> None:
         self._status_hint_token += 1
@@ -625,6 +755,7 @@ class MainWindow(QMainWindow):
 
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
+        self._refresh_folder_list()
 
     def _show_undo_completed_hint(self, result: dict) -> None:
         was_running = bool(result.get("was_running", False))
@@ -943,6 +1074,45 @@ class MainWindow(QMainWindow):
                 color: #374151;
                 font-size: 13px;
             }
+            QListWidget#folderList {
+                background: #F9FAFB;
+                border: 1px solid #E5E7EB;
+                border-radius: 10px;
+                padding: 6px;
+                color: #374151;
+                selection-background-color: transparent;
+            }
+            QListWidget#folderList::item {
+                border: none;
+            }
+            QWidget#folderItem {
+                background: transparent;
+                border-bottom: 1px solid #E5E7EB;
+            }
+            QWidget#folderItem[active="true"] {
+                background: #EEF4FF;
+                border: 1px solid #BFDBFE;
+                border-radius: 9px;
+            }
+            QLabel#folderName {
+                color: #111827;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#folderPath {
+                color: #6B7280;
+                font-size: 11px;
+            }
+            QLabel#folderBadge {
+                color: #2563EB;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QWidget#folderEmptyState {
+                background: #F9FAFB;
+                border: 1px solid #E5E7EB;
+                border-radius: 10px;
+            }
             QLabel#statusBadge {
                 border-radius: 12px;
                 font-size: 24px;
@@ -1254,6 +1424,47 @@ class RuleListItem(QWidget):
 
     def _condition_text(self) -> str:
         return natural_rule_condition(self.rule)
+
+
+class FolderListItem(QWidget):
+    def __init__(self, folder: dict, active: bool = False):
+        super().__init__()
+        self.setObjectName("folderItem")
+        self.setProperty("active", "true" if active else "false")
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(8)
+
+        text_box = QVBoxLayout()
+        text_box.setContentsMargins(0, 0, 0, 0)
+        text_box.setSpacing(3)
+
+        name = QLabel(str(folder.get("display_name") or "文件夹"))
+        name.setObjectName("folderName")
+        name.setWordWrap(True)
+        name.setMinimumWidth(0)
+        name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        path = QLabel(str(folder.get("path") or ""))
+        path.setObjectName("folderPath")
+        path.setWordWrap(True)
+        path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        path.setMinimumWidth(0)
+        path.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        text_box.addWidget(name)
+        text_box.addWidget(path)
+        layout.addLayout(text_box, 1)
+
+        if active:
+            badge = QLabel("当前")
+            badge.setObjectName("folderBadge")
+            badge.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            badge.setFixedWidth(36)
+            layout.addWidget(badge, 0, Qt.AlignTop)
 
 
 class ActivityListItem(QWidget):
