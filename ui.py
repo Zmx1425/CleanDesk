@@ -723,16 +723,39 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "CleanDesk", "暂无可撤销的整理记录。")
             return
 
-        count = len(undo_stack[-1].get("items", []))
+        batch = undo_stack[-1]
+        count = len(batch.get("items", []))
         box = QMessageBox(self)
         box.setWindowTitle("确认撤销")
-        box.setText(f"将把上一次整理的 {count} 个文件移回原位置。是否继续？")
+        box.setText(self._undo_confirmation_text(batch, count))
         undo_button = box.addButton("撤销", QMessageBox.AcceptRole)
         box.addButton("取消", QMessageBox.RejectRole)
         box.setDefaultButton(undo_button)
         box.exec()
         if box.clickedButton() == undo_button:
             self.service.undo_last_batch()
+
+    def _undo_confirmation_text(self, batch: dict, count: int) -> str:
+        folder_names = []
+        seen_names = set()
+        for item in batch.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            folder_name = (
+                str(item.get("folder_name") or "").strip()
+                or str(item.get("source_folder_name") or "").strip()
+                or str(item.get("display_name") or "").strip()
+            )
+            if not folder_name or folder_name in seen_names:
+                continue
+            seen_names.add(folder_name)
+            folder_names.append(folder_name)
+
+        if len(folder_names) == 1:
+            return f"将把“{folder_names[0]}”中上一次整理的 {count} 个文件移回原位置。是否继续？"
+        if len(folder_names) > 1:
+            return f"将把以下文件夹中上一次整理的 {count} 个文件移回原位置：\n\n{chr(10).join(folder_names)}\n\n是否继续？"
+        return f"将把上一次整理的 {count} 个文件移回原位置。是否继续？"
 
     def _handle_name_conflict_request(self, conflict: dict) -> None:
         action = self._choose_name_conflict_action(conflict)
