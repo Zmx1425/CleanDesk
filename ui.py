@@ -197,12 +197,12 @@ class MainWindow(QMainWindow):
                 self.left_layout.setStretch(1, 1)
 
                 self.right_layout.addWidget(self.status_card, 0)
-                self.right_layout.addWidget(self.actions_card, 1)
+                self.right_layout.addWidget(self.actions_card, 0)
                 self.right_layout.setStretch(0, 0)
-                self.right_layout.setStretch(1, 1)
+                self.right_layout.setStretch(1, 0)
 
                 self.rules_card.setMinimumHeight(0)
-                self.actions_card.setMinimumHeight(0)
+                self.actions_card.setMinimumHeight(220)
             else:
                 self.content_layout.setDirection(QBoxLayout.TopToBottom)
                 self.content_layout.addWidget(self.folder_card)
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
                     self.content_layout.setStretch(index, 0)
 
                 self.rules_card.setMinimumHeight(260)
-                self.actions_card.setMinimumHeight(0)
+                self.actions_card.setMinimumHeight(220)
 
             self._layout_mode = mode
             self._refresh_rule_item_sizes()
@@ -358,8 +358,9 @@ class MainWindow(QMainWindow):
         return card
 
     def _actions_card(self) -> QFrame:
-        card = self._card(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        card.setMinimumHeight(210)
+        card = self._card(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.setMinimumHeight(220)
+        card.setMaximumHeight(280)
         layout = self._card_layout(card)
         layout.setSpacing(12)
 
@@ -381,7 +382,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._label("操作", "cardTitle"))
         layout.addWidget(self._label("启动后会监听所有监控文件夹；也可以只整理当前选中的文件夹。", "caption", wrap=True))
         layout.addLayout(button_box)
-        layout.addStretch(1)
         return card
 
     def _logs_card(self) -> QFrame:

@@ -1,0 +1,96 @@
+{
+  "monitored_folders": [],
+  "active_folder_id": "",
+  "monitored_folder": "",
+  "welcome_shown": false,
+  "rules": [
+    {
+      "id": "name_invoice",
+      "name": "Invoice files",
+      "type": "name_contains",
+      "keywords": [
+        "发票",
+        "invoice"
+      ],
+      "target": "发票",
+      "enabled": true,
+      "priority": 10
+    },
+    {
+      "id": "name_course",
+      "name": "Course files",
+      "type": "name_contains",
+      "keywords": [
+        "课程"
+      ],
+      "target": "课程资料",
+      "enabled": true,
+      "priority": 20
+    },
+    {
+      "id": "images",
+      "name": "Images",
+      "type": "extension",
+      "extensions": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".heic",
+        ".svg"
+      ],
+      "target": "图片",
+      "enabled": true,
+      "priority": 30
+    },
+    {
+      "id": "pdf",
+      "name": "PDF",
+      "type": "extension",
+      "extensions": [
+        ".pdf"
+      ],
+      "target": "PDF文档",
+      "enabled": true,
+      "priority": 40
+    },
+    {
+      "id": "videos",
+      "name": "Videos",
+      "type": "extension",
+      "extensions": [
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".m4v"
+      ],
+      "target": "视频",
+      "enabled": true,
+      "priority": 50
+    },
+    {
+      "id": "music",
+      "name": "Audio",
+      "type": "extension",
+      "extensions": [
+        ".mp3",
+        ".wav",
+        ".aac",
+        ".flac",
+        ".m4a",
+        ".ogg",
+        ".wma"
+      ],
+      "target": "音频",
+      "enabled": true,
+      "priority": 60
+    }
+  ]
+}
