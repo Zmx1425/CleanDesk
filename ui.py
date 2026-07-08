@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
 
         self._prepare_button(self.suggestion_button, "secondaryButton")
         self.suggestion_button.setFixedWidth(116)
-        self.suggestion_button.clicked.connect(self._show_smart_suggestions)
+        self.suggestion_button.clicked.connect(self._handle_smart_suggestions_clicked)
 
         add_button = self._button("+ 新建整理规则", "secondaryButton")
         add_button.setFixedWidth(132)
@@ -328,33 +328,32 @@ class MainWindow(QMainWindow):
         return card
 
     def _status_card(self) -> QFrame:
-        card = self._card(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        card.setMinimumHeight(190)
+        card = self._card(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.setMaximumHeight(190)
         layout = self._card_layout(card)
-        layout.setSpacing(10)
+        layout.setSpacing(0)
 
         self.status_badge.setObjectName("statusBadge")
         self.status_badge.setAlignment(Qt.AlignCenter)
-        self.status_badge.setMinimumHeight(58)
+        self.status_badge.setFixedHeight(60)
         self.status_badge.setMinimumWidth(0)
-        self.status_badge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.status_badge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.status_hint.setObjectName("statusHint")
         self.status_hint.setAlignment(Qt.AlignCenter)
         self.status_hint.setWordWrap(True)
         self.status_hint.setMinimumHeight(24)
+        self.status_hint.setMaximumHeight(48)
         self.status_hint.setMinimumWidth(0)
-        self.status_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        status_text_box = QVBoxLayout()
-        status_text_box.setContentsMargins(0, 0, 0, 0)
-        status_text_box.setSpacing(10)
-        status_text_box.addWidget(self.status_badge)
-        status_text_box.addWidget(self.status_hint)
+        self.status_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout.addWidget(self._label("运行状态", "cardTitle"))
+        layout.addSpacing(8)
         layout.addWidget(self._label("当前监听服务状态", "caption", wrap=True))
-        layout.addLayout(status_text_box)
+        layout.addSpacing(12)
+        layout.addWidget(self.status_badge)
+        layout.addSpacing(10)
+        layout.addWidget(self.status_hint)
         return card
 
     def _actions_card(self) -> QFrame:
@@ -368,9 +367,9 @@ class MainWindow(QMainWindow):
         self._prepare_button(self.stop_button, "dangerButton")
         self._prepare_button(self.scan_button, "secondaryButton")
 
-        self.start_button.clicked.connect(self.service.start)
+        self.start_button.clicked.connect(self._handle_start_clicked)
         self.stop_button.clicked.connect(self.service.stop)
-        self.scan_button.clicked.connect(self.service.scan_now)
+        self.scan_button.clicked.connect(self._handle_scan_clicked)
 
         button_box = QVBoxLayout()
         button_box.setContentsMargins(0, 0, 0, 0)
@@ -601,11 +600,11 @@ class MainWindow(QMainWindow):
         active_path = str(getattr(self.service, "monitored_folder", "") or "")
         active_exists = bool(active_path) and Path(active_path).expanduser().exists()
         if hasattr(self, "start_button"):
-            self.start_button.setEnabled(has_folders and not running)
+            self.start_button.setEnabled(not running)
         if hasattr(self, "scan_button"):
-            self.scan_button.setEnabled(has_folders and active_exists)
+            self.scan_button.setEnabled((not has_folders) or active_exists)
         if hasattr(self, "suggestion_button"):
-            self.suggestion_button.setEnabled(has_folders and active_exists)
+            self.suggestion_button.setEnabled((not has_folders) or active_exists)
 
     def _add_rule(self) -> None:
         dialog = RuleDialog(self, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
@@ -616,6 +615,32 @@ class MainWindow(QMainWindow):
         dialog = RuleDialog(self, rule, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
         if dialog.exec() == QDialog.Accepted:
             self.service.update_rule(rule.get("id", ""), dialog.rule_data())
+
+    def _has_monitored_folders(self) -> bool:
+        if hasattr(self.service, "get_monitored_folders"):
+            return bool(self.service.get_monitored_folders())
+        return bool(getattr(self.service, "monitored_folder", ""))
+
+    def _show_no_folder_prompt(self, message: str) -> None:
+        QMessageBox.information(self, "请先添加文件夹", message)
+
+    def _handle_start_clicked(self) -> None:
+        if not self._has_monitored_folders():
+            self._show_no_folder_prompt("请先添加至少一个监控文件夹，再开始自动整理。")
+            return
+        self.service.start()
+
+    def _handle_scan_clicked(self) -> None:
+        if not self._has_monitored_folders():
+            self._show_no_folder_prompt("请先添加一个监控文件夹，再整理当前文件夹。")
+            return
+        self.service.scan_now()
+
+    def _handle_smart_suggestions_clicked(self) -> None:
+        if not self._has_monitored_folders():
+            self._show_no_folder_prompt("请先添加一个监控文件夹，再使用智能整理建议。")
+            return
+        self._show_smart_suggestions()
 
     def _show_smart_suggestions(self) -> None:
         summary = self.service.analyze_smart_suggestions()
