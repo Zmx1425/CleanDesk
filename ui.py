@@ -66,9 +66,9 @@ class MainWindow(QMainWindow):
         self.activity_empty_hint = QLabel("点击“立即扫描”，CleanDesk 会在这里显示整理结果。")
         self.detailed_log_lines: list[str] = []
         self.log_view = QTextEdit()
-        self.start_button = QPushButton("开始")
-        self.stop_button = QPushButton("停止")
-        self.scan_button = QPushButton("立即扫描")
+        self.start_button = QPushButton("开始自动整理")
+        self.stop_button = QPushButton("停止自动整理")
+        self.scan_button = QPushButton("整理当前文件夹")
         self.undo_button = QPushButton("撤销上一次整理")
         self.suggestion_button = QPushButton("智能整理建议")
 
@@ -379,7 +379,7 @@ class MainWindow(QMainWindow):
         button_box.addWidget(self.scan_button)
 
         layout.addWidget(self._label("操作", "cardTitle"))
-        layout.addWidget(self._label("启动监听、停止监听或手动扫描一次。", "caption", wrap=True))
+        layout.addWidget(self._label("启动后会监听所有监控文件夹；也可以只整理当前选中的文件夹。", "caption", wrap=True))
         layout.addLayout(button_box)
         layout.addStretch(1)
         return card
@@ -498,6 +498,7 @@ class MainWindow(QMainWindow):
         self._set_undo_available(bool(getattr(self.service, "undo_stack", [])))
         for line in self.service.recent_logs:
             self._append_log(line)
+        self._refresh_folder_list()
 
     def _choose_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "选择监控文件夹", self.service.monitored_folder)
@@ -597,6 +598,14 @@ class MainWindow(QMainWindow):
         self.folder_list.setVisible(has_folders)
         self.folder_add_button.setEnabled(not running)
         self.folder_remove_button.setEnabled(has_folders and not running and bool(active_id))
+        active_path = str(getattr(self.service, "monitored_folder", "") or "")
+        active_exists = bool(active_path) and Path(active_path).expanduser().exists()
+        if hasattr(self, "start_button"):
+            self.start_button.setEnabled(has_folders and not running)
+        if hasattr(self, "scan_button"):
+            self.scan_button.setEnabled(has_folders and active_exists)
+        if hasattr(self, "suggestion_button"):
+            self.suggestion_button.setEnabled(has_folders and active_exists)
 
     def _add_rule(self) -> None:
         dialog = RuleDialog(self, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
@@ -736,7 +745,6 @@ class MainWindow(QMainWindow):
         display = folder or "尚未选择文件夹"
         self.path_label.setText(display)
         self.path_label.setToolTip(display)
-        self.suggestion_button.setEnabled(bool(folder) and Path(folder).expanduser().exists())
         self._refresh_folder_list()
 
     def _set_status(self, running: bool) -> None:
@@ -744,16 +752,18 @@ class MainWindow(QMainWindow):
         if running:
             self.status_badge.setText("运行中")
             self.status_badge.setProperty("state", "running")
-            self.status_hint.setText("正在监听新文件")
+            running_count = 0
+            if hasattr(self.service, "get_running_folder_count"):
+                running_count = int(self.service.get_running_folder_count())
+            self.status_hint.setText(f"正在监听 {running_count} 个文件夹")
         else:
             self.status_badge.setText("已停止")
             self.status_badge.setProperty("state", "stopped")
-            self.status_hint.setText("点击开始后自动整理新文件")
+            self.status_hint.setText("添加或选择文件夹后，可以整理当前文件夹。")
 
         self.status_badge.style().unpolish(self.status_badge)
         self.status_badge.style().polish(self.status_badge)
 
-        self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self._refresh_folder_list()
 
@@ -1499,7 +1509,7 @@ class ActivityListItem(QWidget):
         top.addWidget(time_label, 0)
         layout.addLayout(top)
 
-        detail = activity.get("detail", "")
+        detail = self._detail_text(activity)
         if detail:
             detail_label = QLabel(detail)
             detail_label.setObjectName("activityDetail")
@@ -1521,6 +1531,16 @@ class ActivityListItem(QWidget):
             action_row.addStretch(1)
             action_row.addWidget(open_button, 0, Qt.AlignRight)
             layout.addLayout(action_row)
+
+    def _detail_text(self, activity: dict) -> str:
+        parts = []
+        source_name = str(activity.get("source_folder_name", "")).strip()
+        if source_name:
+            parts.append(f"来自：{source_name}")
+        detail = str(activity.get("detail", "")).strip()
+        if detail:
+            parts.append(detail)
+        return "\n".join(parts)
 
 
 class SmartSuggestionDialog(QDialog):

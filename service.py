@@ -276,6 +276,7 @@ class CleanDeskService(QObject):
         self.active_folder_id = str(self.config.get("active_folder_id") or "")
         self.monitored_folder = self.get_active_folder_path()
         self.is_running = False
+        self.running_folder_count = 0
         self.recent_logs: deque[str] = deque(maxlen=300)
         self.undo_stack: list[dict[str, Any]] = []
         self.pending_undo_batches: dict[str, dict[str, Any]] = {}
@@ -312,9 +313,10 @@ class CleanDeskService(QObject):
         active_folder = next((folder for folder in self.monitored_folders if folder.get("id") == self.active_folder_id), None)
         return str(active_folder.get("path", "")) if active_folder else ""
 
+    def get_running_folder_count(self) -> int:
+        return self.running_folder_count
+
     def set_active_folder(self, folder_id: str) -> dict[str, Any]:
-        if self.is_running:
-            raise ValueError("请先停止自动整理后再管理监控文件夹。")
         folder = next((folder for folder in self.monitored_folders if folder.get("id") == folder_id), None)
         if not folder:
             raise ValueError("未找到要选择的监控文件夹。")
@@ -413,6 +415,7 @@ class CleanDeskService(QObject):
             self.logger.exception("Unable to start watcher")
             return
         self.is_running = True
+        self.running_folder_count = len(valid_folders)
         self.status_changed.emit(True)
         self.logger.info("已开始监听")
 
@@ -422,6 +425,7 @@ class CleanDeskService(QObject):
             return
         self.watcher.stop()
         self.is_running = False
+        self.running_folder_count = 0
         self.status_changed.emit(False)
         self.logger.info("已停止监听")
 
