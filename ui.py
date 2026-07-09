@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self._rebuilding_layout = False
         self._welcome_prompt_pending = False
         self._status_hint_token = 0
+        self._updating_rules = False
 
         self.path_label = QLabel()
         self.folder_title_label = QLabel()
@@ -310,9 +311,14 @@ class MainWindow(QMainWindow):
         top.addWidget(add_button, 0, Qt.AlignRight | Qt.AlignTop)
 
         self.rules_list.setObjectName("rulesList")
-        self.rules_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.rules_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.rules_list.setFocusPolicy(Qt.NoFocus)
         self.rules_list.setUniformItemSizes(False)
+        self.rules_list.setDragEnabled(True)
+        self.rules_list.setAcceptDrops(True)
+        self.rules_list.setDropIndicatorShown(True)
+        self.rules_list.setDefaultDropAction(Qt.MoveAction)
+        self.rules_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.rules_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.rules_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.rules_list.setResizeMode(QListWidget.Adjust)
@@ -320,6 +326,7 @@ class MainWindow(QMainWindow):
         self.rules_list.setMinimumHeight(180)
         self.rules_list.setMinimumWidth(0)
         self.rules_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.rules_list.model().rowsMoved.connect(self._save_dragged_rule_order)
 
         layout.addLayout(top)
         layout.addWidget(self.rules_list, 1)
@@ -823,23 +830,34 @@ class MainWindow(QMainWindow):
             self.status_hint.setText("点击开始后自动整理新文件")
 
     def _set_rules(self, rules: list[dict]) -> None:
+        self._updating_rules = True
         self.rules_list.clear()
         total = len(rules)
         for index, rule in enumerate(rules):
             item = QListWidgetItem()
+            item.setData(Qt.UserRole, str(rule.get("id", "")))
             row = RuleListItem(
                 rule,
                 self._edit_rule,
                 self._delete_rule,
-                self._move_rule_up,
-                self._move_rule_down,
                 index,
                 total,
             )
             item.setSizeHint(row.sizeHint())
             self.rules_list.addItem(item)
             self.rules_list.setItemWidget(item, row)
+        self._updating_rules = False
         self._refresh_rule_item_sizes()
+
+    def _save_dragged_rule_order(self, *args) -> None:
+        if self._updating_rules:
+            return
+        rule_ids = [
+            str(self.rules_list.item(index).data(Qt.UserRole) or "")
+            for index in range(self.rules_list.count())
+        ]
+        if hasattr(self.service, "reorder_rules"):
+            self.service.reorder_rules(rule_ids)
 
     def _refresh_rule_item_sizes(self) -> None:
         viewport_width = self.rules_list.viewport().width()
@@ -1266,6 +1284,11 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 border-bottom: 1px solid #E5E7EB;
             }
+            QLabel#ruleDragHandle {
+                color: #9CA3AF;
+                font-size: 17px;
+                font-weight: 700;
+            }
             QWidget#activityItem {
                 background: transparent;
                 border-bottom: 1px solid #E5E7EB;
@@ -1380,13 +1403,11 @@ class MainWindow(QMainWindow):
 
 
 class RuleListItem(QWidget):
-    def __init__(self, rule: dict, edit_callback, delete_callback, move_up_callback, move_down_callback, index: int, total: int):
+    def __init__(self, rule: dict, edit_callback, delete_callback, index: int, total: int):
         super().__init__()
         self.rule = dict(rule)
         self.edit_callback = edit_callback
         self.delete_callback = delete_callback
-        self.move_up_callback = move_up_callback
-        self.move_down_callback = move_down_callback
         self.setObjectName("ruleItem")
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -1399,24 +1420,11 @@ class RuleListItem(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        arrow_box = QVBoxLayout()
-        arrow_box.setContentsMargins(0, 0, 0, 0)
-        arrow_box.setSpacing(3)
-
-        up_button = QPushButton("↑")
-        up_button.setObjectName("ruleArrowButton")
-        up_button.setFixedSize(22, 20)
-        up_button.setEnabled(index > 0)
-        up_button.clicked.connect(lambda: self.move_up_callback(self.rule))
-
-        down_button = QPushButton("↓")
-        down_button.setObjectName("ruleArrowButton")
-        down_button.setFixedSize(22, 20)
-        down_button.setEnabled(index < total - 1)
-        down_button.clicked.connect(lambda: self.move_down_callback(self.rule))
-
-        arrow_box.addWidget(up_button)
-        arrow_box.addWidget(down_button)
+        drag_handle = QLabel("⋮⋮")
+        drag_handle.setObjectName("ruleDragHandle")
+        drag_handle.setAlignment(Qt.AlignCenter)
+        drag_handle.setFixedWidth(24)
+        drag_handle.setToolTip("拖动调整规则顺序")
 
         content_box = QVBoxLayout()
         content_box.setContentsMargins(0, 0, 0, 0)
@@ -1445,7 +1453,7 @@ class RuleListItem(QWidget):
         actions_box.addWidget(delete_button)
         actions_box.addStretch(1)
 
-        row.addLayout(arrow_box, 0)
+        row.addWidget(drag_handle, 0, Qt.AlignTop)
         row.addLayout(content_box, 1)
         row.addLayout(actions_box, 0)
         layout.addLayout(row)

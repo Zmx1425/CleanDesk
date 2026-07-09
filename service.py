@@ -662,6 +662,27 @@ class CleanDeskService(QObject):
         self.rules_changed.emit(self.rules)
         self.logger.info("Rule moved: %s -> %s", rule_id, target_index)
 
+    def reorder_rules(self, rule_ids: list[str]) -> None:
+        rules_by_id = {str(rule.get("id", "")): rule for rule in self.rules}
+        reordered = []
+        seen_ids = set()
+        for rule_id in rule_ids:
+            rule = rules_by_id.get(str(rule_id))
+            if not rule or str(rule_id) in seen_ids:
+                continue
+            reordered.append(rule)
+            seen_ids.add(str(rule_id))
+
+        if len(reordered) != len(self.rules):
+            self.logger.warning("Rule reorder skipped because the rule id list is incomplete")
+            return
+
+        self.rules = assign_rule_priorities(normalize_rules(reordered))
+        self.config["rules"] = self.rules
+        self._persist_config()
+        self.rules_changed.emit(self.rules)
+        self.logger.info("Rules reordered by drag and drop")
+
     @Slot()
     def undo_last_batch(self) -> None:
         if not self.undo_stack:
