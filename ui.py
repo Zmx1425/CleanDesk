@@ -197,8 +197,8 @@ class MainWindow(QMainWindow):
                 self.right_layout.setStretch(0, 0)
                 self.right_layout.setStretch(1, 1)
 
-                self.folder_card.setMinimumHeight(360)
-                self.folder_list.setMinimumHeight(220)
+                self.folder_card.setMinimumHeight(320)
+                self.folder_list.setMinimumHeight(180)
                 self.rules_card.setMinimumHeight(260)
             else:
                 self.content_layout.setDirection(QBoxLayout.TopToBottom)
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         widget.setParent(None)
 
     def _folder_card(self) -> QFrame:
-        card = self._card(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        card = self._card(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = self._card_layout(card)
 
         self.folder_title_label = self._label("监控文件夹（0）", "cardTitle")
@@ -247,10 +247,11 @@ class MainWindow(QMainWindow):
         self.folder_list.setWordWrap(True)
         self.folder_list.setMinimumHeight(128)
         self.folder_list.setMinimumWidth(0)
-        self.folder_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.folder_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.folder_list.itemClicked.connect(self._select_folder_item)
 
         self.folder_empty_widget.setObjectName("folderEmptyState")
+        self.folder_empty_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         empty_layout = QVBoxLayout(self.folder_empty_widget)
         empty_layout.setContentsMargins(12, 18, 12, 18)
         empty_layout.setSpacing(6)
@@ -274,11 +275,11 @@ class MainWindow(QMainWindow):
         action_row.addWidget(self.folder_add_button)
         action_row.addWidget(self.folder_remove_button)
 
-        layout.addWidget(self.folder_title_label)
-        layout.addWidget(self.folder_caption_label)
-        layout.addWidget(self.folder_empty_widget)
-        layout.addWidget(self.folder_list)
-        layout.addLayout(action_row)
+        layout.addWidget(self.folder_title_label, 0, Qt.AlignTop)
+        layout.addWidget(self.folder_caption_label, 0, Qt.AlignTop)
+        layout.addWidget(self.folder_empty_widget, 1)
+        layout.addWidget(self.folder_list, 1)
+        layout.addLayout(action_row, 0)
         return card
 
     def _rules_card(self) -> QFrame:
