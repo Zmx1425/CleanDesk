@@ -1284,10 +1284,13 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 border-bottom: 1px solid #E5E7EB;
             }
-            QLabel#ruleDragHandle {
-                color: #9CA3AF;
-                font-size: 17px;
-                font-weight: 700;
+            QWidget#ruleDragHandle {
+                background: transparent;
+            }
+            QFrame#ruleDragLine {
+                background: #9CA3AF;
+                border: none;
+                border-radius: 1px;
             }
             QWidget#activityItem {
                 background: transparent;
@@ -1420,11 +1423,23 @@ class RuleListItem(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        drag_handle = QLabel("⋮⋮")
+        drag_handle = QWidget()
         drag_handle.setObjectName("ruleDragHandle")
-        drag_handle.setAlignment(Qt.AlignCenter)
         drag_handle.setFixedWidth(24)
+        drag_handle.setFixedHeight(28)
+        drag_handle.setCursor(Qt.OpenHandCursor)
         drag_handle.setToolTip("拖动调整规则顺序")
+        drag_layout = QVBoxLayout(drag_handle)
+        drag_layout.setContentsMargins(5, 5, 5, 5)
+        drag_layout.setSpacing(3)
+        drag_layout.addStretch(1)
+        for _ in range(3):
+            line = QFrame()
+            line.setObjectName("ruleDragLine")
+            line.setFixedSize(14, 2)
+            line.setFrameShape(QFrame.NoFrame)
+            drag_layout.addWidget(line, 0, Qt.AlignCenter)
+        drag_layout.addStretch(1)
 
         content_box = QVBoxLayout()
         content_box.setContentsMargins(0, 0, 0, 0)
@@ -1453,7 +1468,7 @@ class RuleListItem(QWidget):
         actions_box.addWidget(delete_button)
         actions_box.addStretch(1)
 
-        row.addWidget(drag_handle, 0, Qt.AlignTop)
+        row.addWidget(drag_handle, 0, Qt.AlignVCenter)
         row.addLayout(content_box, 1)
         row.addLayout(actions_box, 0)
         layout.addLayout(row)
