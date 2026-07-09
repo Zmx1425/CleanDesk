@@ -125,8 +125,7 @@ class MainWindow(QMainWindow):
 
         self.folder_card = self._folder_card()
         self.rules_card = self._rules_card()
-        self.status_card = self._status_card()
-        self.actions_card = self._actions_card()
+        self.control_card = self._control_center_card()
         self.log_card = self._logs_card()
 
         self.root_layout.addWidget(self.header_widget, 0)
@@ -176,9 +175,8 @@ class MainWindow(QMainWindow):
                 self.left_column,
                 self.right_column,
                 self.folder_card,
-                self.status_card,
+                self.control_card,
                 self.rules_card,
-                self.actions_card,
                 self.log_card,
             ):
                 self._remove_widget_from_responsive_layouts(widget)
@@ -188,33 +186,32 @@ class MainWindow(QMainWindow):
                 self.root_layout.addWidget(self.log_card, 1)
                 self.content_layout.addWidget(self.left_column)
                 self.content_layout.addWidget(self.right_column)
-                self.content_layout.setStretch(0, 1)
-                self.content_layout.setStretch(1, 1)
+                self.content_layout.setStretch(0, 11)
+                self.content_layout.setStretch(1, 10)
 
-                self.left_layout.addWidget(self.folder_card, 0)
-                self.left_layout.addWidget(self.rules_card, 1)
-                self.left_layout.setStretch(0, 0)
-                self.left_layout.setStretch(1, 1)
+                self.left_layout.addWidget(self.folder_card, 1)
+                self.left_layout.setStretch(0, 1)
 
-                self.right_layout.addWidget(self.status_card, 0)
-                self.right_layout.addWidget(self.actions_card, 0)
+                self.right_layout.addWidget(self.control_card, 0)
+                self.right_layout.addWidget(self.rules_card, 1)
                 self.right_layout.setStretch(0, 0)
-                self.right_layout.setStretch(1, 0)
+                self.right_layout.setStretch(1, 1)
 
-                self.rules_card.setMinimumHeight(0)
-                self.actions_card.setMinimumHeight(220)
+                self.folder_card.setMinimumHeight(360)
+                self.folder_list.setMinimumHeight(220)
+                self.rules_card.setMinimumHeight(260)
             else:
                 self.content_layout.setDirection(QBoxLayout.TopToBottom)
                 self.content_layout.addWidget(self.folder_card)
-                self.content_layout.addWidget(self.status_card)
+                self.content_layout.addWidget(self.control_card)
                 self.content_layout.addWidget(self.rules_card)
-                self.content_layout.addWidget(self.actions_card)
                 self.content_layout.addWidget(self.log_card)
-                for index in range(5):
+                for index in range(4):
                     self.content_layout.setStretch(index, 0)
 
+                self.folder_card.setMinimumHeight(0)
+                self.folder_list.setMinimumHeight(128)
                 self.rules_card.setMinimumHeight(260)
-                self.actions_card.setMinimumHeight(220)
 
             self._layout_mode = mode
             self._refresh_rule_item_sizes()
@@ -327,11 +324,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.rules_list, 1)
         return card
 
-    def _status_card(self) -> QFrame:
+    def _control_center_card(self) -> QFrame:
         card = self._card(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        card.setMaximumHeight(190)
+        card.setMaximumHeight(360)
         layout = self._card_layout(card)
-        layout.setSpacing(0)
+        layout.setSpacing(12)
 
         self.status_badge.setObjectName("statusBadge")
         self.status_badge.setAlignment(Qt.AlignCenter)
@@ -346,22 +343,6 @@ class MainWindow(QMainWindow):
         self.status_hint.setMaximumHeight(48)
         self.status_hint.setMinimumWidth(0)
         self.status_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout.addWidget(self._label("运行状态", "cardTitle"))
-        layout.addSpacing(8)
-        layout.addWidget(self._label("当前监听服务状态", "caption", wrap=True))
-        layout.addSpacing(12)
-        layout.addWidget(self.status_badge)
-        layout.addSpacing(10)
-        layout.addWidget(self.status_hint)
-        return card
-
-    def _actions_card(self) -> QFrame:
-        card = self._card(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        card.setMinimumHeight(220)
-        card.setMaximumHeight(280)
-        layout = self._card_layout(card)
-        layout.setSpacing(12)
 
         self._prepare_button(self.start_button, "primaryButton")
         self._prepare_button(self.stop_button, "dangerButton")
@@ -378,9 +359,11 @@ class MainWindow(QMainWindow):
         button_box.addWidget(self.stop_button)
         button_box.addWidget(self.scan_button)
 
-        layout.addWidget(self._label("操作", "cardTitle"))
-        layout.addWidget(self._label("启动后会监听所有监控文件夹；也可以只整理当前选中的文件夹。", "caption", wrap=True))
+        layout.addWidget(self._label("控制中心", "cardTitle"))
+        layout.addWidget(self.status_badge)
+        layout.addWidget(self.status_hint)
         layout.addLayout(button_box)
+        layout.addWidget(self._label("启动后会监听所有监控文件夹；也可以只整理当前选中的文件夹。", "caption", wrap=True))
         return card
 
     def _logs_card(self) -> QFrame:
