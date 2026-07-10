@@ -254,13 +254,13 @@ class MainWindow(QMainWindow):
         self.folder_empty_widget.setObjectName("folderEmptyState")
         self.folder_empty_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         empty_layout = QVBoxLayout(self.folder_empty_widget)
-        empty_layout.setContentsMargins(12, 18, 12, 18)
-        empty_layout.setSpacing(6)
+        empty_layout.setContentsMargins(12, 14, 12, 14)
+        empty_layout.setSpacing(3)
         empty_title = QLabel("还没有添加监控文件夹")
-        empty_title.setObjectName("emptyStateTitle")
+        empty_title.setObjectName("folderEmptyTitle")
         empty_title.setAlignment(Qt.AlignCenter)
         empty_hint = QLabel("点击“添加文件夹”开始使用。")
-        empty_hint.setObjectName("emptyStateHint")
+        empty_hint.setObjectName("folderEmptyHint")
         empty_hint.setAlignment(Qt.AlignCenter)
         empty_hint.setWordWrap(True)
         empty_layout.addWidget(empty_title)
@@ -692,14 +692,14 @@ class MainWindow(QMainWindow):
 
     def _delete_rule(self, rule: dict) -> None:
         rule_name = rule.get("name", "未命名规则")
-        result = QMessageBox.question(
-            self,
-            "删除整理规则",
-            f"确定要删除“{rule_name}”吗？\n\n删除后，这条规则不会再用于自动整理。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if result == QMessageBox.Yes:
+        box = QMessageBox(self)
+        box.setWindowTitle("删除整理规则")
+        box.setText(f"确定要删除“{rule_name}”吗？\n\n删除后，这条规则不会再用于自动整理。")
+        confirm_button = box.addButton("确认", QMessageBox.DestructiveRole)
+        cancel_button = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        if box.clickedButton() == confirm_button:
             self.service.delete_rule(rule.get("id", ""))
 
     def _set_undo_available(self, available: bool) -> None:
@@ -766,14 +766,15 @@ class MainWindow(QMainWindow):
 
         clicked = box.clickedButton()
         if clicked == replace_button:
-            confirm = QMessageBox.warning(
-                self,
-                "确认替换",
-                f"已有文件“{filename}”会被替换，此操作不可恢复。\n\n确定要替换吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            return "replace" if confirm == QMessageBox.Yes else "keep"
+            confirm_box = QMessageBox(self)
+            confirm_box.setIcon(QMessageBox.Warning)
+            confirm_box.setWindowTitle("确认替换")
+            confirm_box.setText(f"已有文件“{filename}”会被替换，此操作不可恢复。\n\n确定要替换吗？")
+            confirm_button = confirm_box.addButton("确认", QMessageBox.DestructiveRole)
+            cancel_button = confirm_box.addButton("取消", QMessageBox.RejectRole)
+            confirm_box.setDefaultButton(cancel_button)
+            confirm_box.exec()
+            return "replace" if confirm_box.clickedButton() == confirm_button else "keep"
         if clicked == skip_button:
             return "skip"
         if clicked == cancel_button:
@@ -1347,6 +1348,16 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
                 font-weight: 500;
             }
+            QLabel#folderEmptyTitle {
+                color: #6B7280;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#folderEmptyHint {
+                color: #9CA3AF;
+                font-size: 13px;
+                font-weight: 500;
+            }
             QLabel#fieldHint {
                 color: #6B7280;
                 font-size: 12px;
@@ -1851,8 +1862,9 @@ class RuleDialog(QDialog):
         self.target_button.setObjectName("secondaryButton")
         self.target_button.setFixedWidth(80)
         self.target_button.clicked.connect(self._choose_target_folder)
-        self.target_hint = QLabel("可以输入文件夹名称，也可以点击“选择...”选择位置。")
+        self.target_hint = QLabel("可以留空，CleanDesk 会用规则名称或关键词自动生成文件夹名；也可以点击“选择...”选择位置。")
         self.target_hint.setObjectName("fieldHint")
+        self.target_hint.setWordWrap(True)
         self.target_error = QLabel()
         self.target_error.setObjectName("fieldError")
         self.target_error.setWordWrap(True)
@@ -1972,10 +1984,11 @@ class RuleDialog(QDialog):
         rule_type = self.type_input.currentData()
         values = split_values(self.value_input.text())
         name = self.name_input.text().strip()
-        target = self.target_input.text().strip()
+        generated_name = auto_rule_name(rule_type, values)
+        target = self.target_input.text().strip() or default_rule_target(rule_type, values, name, generated_name)
         rule = {
             "id": self.rule.get("id", ""),
-            "name": name or auto_rule_name(rule_type, values),
+            "name": name or generated_name,
             "type": rule_type,
             "target": target,
             "enabled": self.rule.get("enabled", True),
@@ -1993,9 +2006,6 @@ class RuleDialog(QDialog):
         valid = True
         if not split_values(self.value_input.text()):
             self.value_error.setText("请至少填写一个文件类型或关键词。")
-            valid = False
-        if not self.target_input.text().strip():
-            self.target_error.setText("请填写要移动到的目标文件夹。")
             valid = False
         if valid:
             self.accept()
@@ -2016,3 +2026,11 @@ def auto_rule_name(rule_type: str, values: list[str]) -> str:
         return auto_extension_rule_name([normalize_extension_text(value) for value in values])
     first = values[0] if values else "关键词"
     return f"{first}文件"
+
+
+def default_rule_target(rule_type: str, values: list[str], name: str, generated_name: str) -> str:
+    if name:
+        return name
+    if rule_type == "name_contains" and values:
+        return values[0]
+    return generated_name.replace(" ", "")
