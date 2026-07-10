@@ -6,7 +6,7 @@
   "rules": [
     {
       "id": "name_invoice",
-      "name": "Invoice files",
+      "name": "发票文件",
       "type": "name_contains",
       "keywords": [
         "发票",
@@ -18,7 +18,7 @@
     },
     {
       "id": "name_course",
-      "name": "Course files",
+      "name": "课程资料",
       "type": "name_contains",
       "keywords": [
         "课程"
@@ -29,7 +29,7 @@
     },
     {
       "id": "images",
-      "name": "Images",
+      "name": "图片",
       "type": "extension",
       "extensions": [
         ".jpg",
@@ -48,7 +48,7 @@
     },
     {
       "id": "pdf",
-      "name": "PDF",
+      "name": "PDF 文档",
       "type": "extension",
       "extensions": [
         ".pdf"
@@ -59,7 +59,7 @@
     },
     {
       "id": "videos",
-      "name": "Videos",
+      "name": "视频",
       "type": "extension",
       "extensions": [
         ".mp4",
@@ -77,7 +77,7 @@
     },
     {
       "id": "music",
-      "name": "Audio",
+      "name": "音频",
       "type": "extension",
       "extensions": [
         ".mp3",

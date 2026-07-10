@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -253,18 +254,25 @@ class MainWindow(QMainWindow):
 
         self.folder_empty_widget.setObjectName("folderEmptyState")
         self.folder_empty_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        empty_layout = QVBoxLayout(self.folder_empty_widget)
-        empty_layout.setContentsMargins(12, 14, 12, 14)
-        empty_layout.setSpacing(3)
+        empty_layout = QGridLayout(self.folder_empty_widget)
+        empty_layout.setContentsMargins(12, 12, 12, 12)
+        empty_group = QWidget()
+        empty_group.setObjectName("folderEmptyTextGroup")
+        empty_group.setMinimumWidth(300)
+        empty_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        empty_group_layout = QVBoxLayout(empty_group)
+        empty_group_layout.setContentsMargins(0, 0, 0, 0)
+        empty_group_layout.setSpacing(8)
         empty_title = QLabel("还没有添加监控文件夹")
         empty_title.setObjectName("folderEmptyTitle")
         empty_title.setAlignment(Qt.AlignCenter)
         empty_hint = QLabel("点击“添加文件夹”开始使用。")
         empty_hint.setObjectName("folderEmptyHint")
         empty_hint.setAlignment(Qt.AlignCenter)
-        empty_hint.setWordWrap(True)
-        empty_layout.addWidget(empty_title)
-        empty_layout.addWidget(empty_hint)
+        empty_hint.setWordWrap(False)
+        empty_group_layout.addWidget(empty_title)
+        empty_group_layout.addWidget(empty_hint)
+        empty_layout.addWidget(empty_group, 0, 0, Qt.AlignCenter)
 
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
