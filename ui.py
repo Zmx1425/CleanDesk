@@ -296,16 +296,11 @@ class MainWindow(QMainWindow):
         card = self._card(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = self._card_layout(card)
 
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(SPACING)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(SPACING)
 
-        title_box = QVBoxLayout()
-        title_box.setContentsMargins(0, 0, 0, 0)
-        title_box.setSpacing(4)
-        title_box.addWidget(self._label("自动整理规则", "cardTitle"))
-        title_box.addWidget(self._label("符合条件的文件会自动移动到对应文件夹。", "caption", wrap=True))
-        title_box.addWidget(self._label("上方规则会优先匹配。", "caption", wrap=True))
+        title_label = self._label("自动整理规则", "cardTitle")
 
         self._prepare_button(self.suggestion_button, "secondaryButton")
         self.suggestion_button.setFixedWidth(116)
@@ -319,10 +314,17 @@ class MainWindow(QMainWindow):
         add_button.setFixedWidth(132)
         add_button.clicked.connect(self._add_rule)
 
-        top.addLayout(title_box, 1)
-        top.addWidget(self.ignore_rules_button, 0, Qt.AlignRight | Qt.AlignTop)
-        top.addWidget(self.suggestion_button, 0, Qt.AlignRight | Qt.AlignTop)
-        top.addWidget(add_button, 0, Qt.AlignRight | Qt.AlignTop)
+        header.addWidget(title_label, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        header.addStretch(1)
+        header.addWidget(self.ignore_rules_button, 0, Qt.AlignRight | Qt.AlignVCenter)
+        header.addWidget(self.suggestion_button, 0, Qt.AlignRight | Qt.AlignVCenter)
+        header.addWidget(add_button, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+        description = QVBoxLayout()
+        description.setContentsMargins(0, 0, 0, 0)
+        description.setSpacing(4)
+        description.addWidget(self._label("符合条件的文件会自动移动到对应文件夹。", "caption"))
+        description.addWidget(self._label("上方规则会优先匹配。", "caption"))
 
         self.rules_list.setObjectName("rulesList")
         self.rules_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -342,7 +344,9 @@ class MainWindow(QMainWindow):
         self.rules_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.rules_list.model().rowsMoved.connect(self._save_dragged_rule_order)
 
-        layout.addLayout(top)
+        layout.addLayout(header)
+        layout.addLayout(description)
+        layout.setSpacing(10)
         layout.addWidget(self.rules_list, 1)
         return card
 
