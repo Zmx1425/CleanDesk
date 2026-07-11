@@ -80,7 +80,8 @@ def normalize_rules(rules: list[dict]) -> list[dict]:
         prepared["id"] = prepared.get("id") or uuid4().hex
         prepared["name"] = str(prepared.get("name") or "Untitled Rule")
         prepared["type"] = str(prepared.get("type") or "")
-        prepared["target"] = str(prepared.get("target") or "Unsorted")
+        prepared["action"] = "ignore" if prepared.get("action") == "ignore" else "move"
+        prepared["target"] = "" if prepared["action"] == "ignore" else str(prepared.get("target") or "Unsorted")
         prepared["enabled"] = bool(prepared.get("enabled", True))
         prepared["priority"] = int(prepared.get("priority", 100))
         if prepared["type"] == "extension":
@@ -108,7 +109,9 @@ def normalize_extension(value: str) -> str:
 
 
 def find_matching_rule(path: Path, rules: list[dict]) -> dict | None:
-    for rule in rules:
+    ordered_rules = [rule for rule in rules if rule.get("action", "move") == "ignore"]
+    ordered_rules.extend(rule for rule in rules if rule.get("action", "move") != "ignore")
+    for rule in ordered_rules:
         if not rule.get("enabled", True):
             continue
         if _matches(path, rule):

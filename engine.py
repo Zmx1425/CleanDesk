@@ -50,12 +50,16 @@ class FileOrganizerEngine:
             return result
         if source.parent != base:
             return result
+        rule = find_matching_rule(source, rules)
+        if rule and rule.get("action", "move") == "ignore":
+            self.logger.info("Ignored by rule %s: %s", rule.get("name", ""), source.name)
+            result.update({"status": "ignored", "rule": rule})
+            return result
         if is_hidden_or_temp_file(source):
             self.logger.info("Skipped temporary or hidden file: %s", source.name)
             return result
 
         self._wait_until_stable(source)
-        rule = find_matching_rule(source, rules)
         if not rule:
             self.logger.info("No rule matched: %s", source.name)
             result["status"] = "no_match"

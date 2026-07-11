@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("停止自动整理")
         self.scan_button = QPushButton("整理当前文件夹")
         self.undo_button = QPushButton("撤销上一次整理")
+        self.ignore_rules_button = QPushButton("忽略规则")
         self.suggestion_button = QPushButton("智能整理建议")
 
         self._build_window()
@@ -310,11 +311,16 @@ class MainWindow(QMainWindow):
         self.suggestion_button.setFixedWidth(116)
         self.suggestion_button.clicked.connect(self._handle_smart_suggestions_clicked)
 
+        self._prepare_button(self.ignore_rules_button, "secondaryButton")
+        self.ignore_rules_button.setFixedWidth(88)
+        self.ignore_rules_button.clicked.connect(self._show_ignore_rules)
+
         add_button = self._button("+ 新建整理规则", "secondaryButton")
         add_button.setFixedWidth(132)
         add_button.clicked.connect(self._add_rule)
 
         top.addLayout(title_box, 1)
+        top.addWidget(self.ignore_rules_button, 0, Qt.AlignRight | Qt.AlignTop)
         top.addWidget(self.suggestion_button, 0, Qt.AlignRight | Qt.AlignTop)
         top.addWidget(add_button, 0, Qt.AlignRight | Qt.AlignTop)
 
@@ -606,14 +612,19 @@ class MainWindow(QMainWindow):
             self.suggestion_button.setEnabled((not has_folders) or active_exists)
 
     def _add_rule(self) -> None:
-        dialog = RuleDialog(self, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
+        move_rules = [rule for rule in self.service.rules if rule.get("action", "move") != "ignore"]
+        dialog = RuleDialog(self, existing_rules=move_rules, monitored_folder=self.service.monitored_folder)
         if dialog.exec() == QDialog.Accepted:
             self.service.add_rule(dialog.rule_data())
 
     def _edit_rule(self, rule: dict) -> None:
-        dialog = RuleDialog(self, rule, existing_rules=self.service.rules, monitored_folder=self.service.monitored_folder)
+        move_rules = [item for item in self.service.rules if item.get("action", "move") != "ignore"]
+        dialog = RuleDialog(self, rule, existing_rules=move_rules, monitored_folder=self.service.monitored_folder)
         if dialog.exec() == QDialog.Accepted:
             self.service.update_rule(rule.get("id", ""), dialog.rule_data())
+
+    def _show_ignore_rules(self) -> None:
+        IgnoreRulesDialog(self, self.service).exec()
 
     def _has_monitored_folders(self) -> bool:
         if hasattr(self.service, "get_monitored_folders"):
@@ -841,8 +852,9 @@ class MainWindow(QMainWindow):
     def _set_rules(self, rules: list[dict]) -> None:
         self._updating_rules = True
         self.rules_list.clear()
-        total = len(rules)
-        for index, rule in enumerate(rules):
+        move_rules = [rule for rule in rules if rule.get("action", "move") != "ignore"]
+        total = len(move_rules)
+        for index, rule in enumerate(move_rules):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, str(rule.get("id", "")))
             row = RuleListItem(
@@ -1592,7 +1604,7 @@ class ActivityListItem(QWidget):
             detail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             layout.addWidget(detail_label)
 
-        if activity.get("status") == "success" and activity.get("target_path") and open_callback:
+        if activity.get("status") in {"success", "ignored"} and activity.get("target_path") and open_callback:
             action_row = QHBoxLayout()
             action_row.setContentsMargins(0, 2, 0, 0)
             action_row.setSpacing(0)
@@ -1615,6 +1627,210 @@ class ActivityListItem(QWidget):
         if detail:
             parts.append(detail)
         return "\n".join(parts)
+
+
+class IgnoreRulesDialog(QDialog):
+    def __init__(self, parent, service):
+        super().__init__(parent)
+        self.service = service
+        self.setWindowTitle("忽略规则")
+        self.setMinimumSize(600, 430)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("忽略规则")
+        title.setObjectName("cardTitle")
+        description = QLabel("符合忽略规则的文件会保留在原位置，不会被自动整理。")
+        description.setObjectName("caption")
+        description.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(description)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setObjectName("rulesList")
+        self.list_widget.setSelectionMode(QAbstractItemView.NoSelection)
+        self.list_widget.setFocusPolicy(Qt.NoFocus)
+        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list_widget.setWordWrap(True)
+        layout.addWidget(self.list_widget, 1)
+
+        buttons = QHBoxLayout()
+        add_button = QPushButton("+ 新增忽略规则")
+        add_button.setObjectName("secondaryButton")
+        add_button.setFixedHeight(BUTTON_HEIGHT)
+        add_button.clicked.connect(self._add_rule)
+        close_button = QPushButton("关闭")
+        close_button.setObjectName("secondaryButton")
+        close_button.setFixedHeight(BUTTON_HEIGHT)
+        close_button.clicked.connect(self.accept)
+        buttons.addWidget(add_button)
+        buttons.addStretch(1)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        self.service.rules_changed.connect(self._refresh)
+        self._refresh(self.service.rules)
+
+    def _refresh(self, rules: list[dict]) -> None:
+        self.list_widget.clear()
+        ignore_rules = [rule for rule in rules if rule.get("action", "move") == "ignore"]
+        if not ignore_rules:
+            item = QListWidgetItem("还没有忽略规则。")
+            item.setFlags(Qt.NoItemFlags)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.list_widget.addItem(item)
+            return
+        for rule in ignore_rules:
+            item = QListWidgetItem()
+            row = IgnoreRuleListItem(rule, self._edit_rule, self._delete_rule)
+            item.setSizeHint(row.sizeHint())
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, row)
+
+    def _add_rule(self) -> None:
+        dialog = IgnoreRuleDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            self.service.add_ignore_rule(dialog.rule_data())
+
+    def _edit_rule(self, rule: dict) -> None:
+        dialog = IgnoreRuleDialog(self, rule)
+        if dialog.exec() == QDialog.Accepted:
+            self.service.update_ignore_rule(str(rule.get("id", "")), dialog.rule_data())
+
+    def _delete_rule(self, rule: dict) -> None:
+        name = natural_rule_name(rule)
+        box = QMessageBox(self)
+        box.setWindowTitle("删除忽略规则")
+        box.setText(f"确定要删除“{name}”吗？\n删除后，符合此规则的文件可能会被其他规则整理。")
+        confirm = box.addButton("确认", QMessageBox.DestructiveRole)
+        cancel = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() == confirm:
+            self.service.delete_ignore_rule(str(rule.get("id", "")))
+
+
+class IgnoreRuleListItem(QWidget):
+    def __init__(self, rule: dict, edit_callback, delete_callback):
+        super().__init__()
+        self.setObjectName("ruleItem")
+        self.setMinimumWidth(0)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+        text = QVBoxLayout()
+        text.setSpacing(3)
+        name = QLabel(natural_rule_name(rule))
+        name.setObjectName("ruleName")
+        condition = QLabel(natural_rule_condition(rule))
+        condition.setObjectName("ruleMeta")
+        condition.setWordWrap(True)
+        result = QLabel("忽略，不整理")
+        result.setObjectName("ruleTarget")
+        text.addWidget(name)
+        text.addWidget(condition)
+        text.addWidget(result)
+        layout.addLayout(text, 1)
+        edit = QPushButton("编辑")
+        edit.setObjectName("linkButton")
+        edit.setFixedSize(40, 26)
+        edit.clicked.connect(lambda: edit_callback(dict(rule)))
+        delete = QPushButton("删除")
+        delete.setObjectName("linkButton")
+        delete.setFixedSize(40, 26)
+        delete.clicked.connect(lambda: delete_callback(dict(rule)))
+        layout.addWidget(edit, 0, Qt.AlignVCenter)
+        layout.addWidget(delete, 0, Qt.AlignVCenter)
+
+
+class IgnoreRuleDialog(QDialog):
+    def __init__(self, parent=None, rule: dict | None = None):
+        super().__init__(parent)
+        self.rule = dict(rule or {})
+        self.setWindowTitle("编辑忽略规则" if rule else "新增忽略规则")
+        self.setMinimumWidth(480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+        title = QLabel("编辑忽略规则" if rule else "新增忽略规则")
+        title.setObjectName("cardTitle")
+        hint = QLabel("符合此规则的文件会留在原位置，不会被自动整理。")
+        hint.setObjectName("caption")
+        hint.setWordWrap(True)
+        self.type_input = QComboBox()
+        self.type_input.addItem("按文件类型", "extension")
+        self.type_input.addItem("按文件名关键词", "name_contains")
+        self.type_input.currentIndexChanged.connect(self._sync_fields)
+        self.value_label = QLabel()
+        self.value_input = QLineEdit()
+        self.value_hint = QLabel()
+        self.value_hint.setObjectName("fieldHint")
+        self.value_error = QLabel()
+        self.value_error.setObjectName("fieldError")
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("可选，留空时自动生成")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addWidget(QLabel("忽略哪些文件？"))
+        layout.addWidget(self.type_input)
+        layout.addWidget(self.value_label)
+        layout.addWidget(self.value_input)
+        layout.addWidget(self.value_hint)
+        layout.addWidget(self.value_error)
+        layout.addWidget(QLabel("规则名称（可选）"))
+        layout.addWidget(self.name_input)
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
+        buttons.button(QDialogButtonBox.Ok).setText("保存规则")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._load_rule()
+        self._sync_fields()
+
+    def _load_rule(self) -> None:
+        rule_type = str(self.rule.get("type", "extension"))
+        self.type_input.setCurrentIndex(max(0, self.type_input.findData(rule_type)))
+        values = self.rule.get("extensions", []) if rule_type == "extension" else self.rule.get("keywords", [])
+        self.value_input.setText("，".join(str(value).lstrip(".") if rule_type == "extension" else str(value) for value in values))
+        name = str(self.rule.get("name", ""))
+        self.name_input.setText("" if name == "Untitled Rule" else name)
+
+    def _sync_fields(self) -> None:
+        if self.type_input.currentData() == "extension":
+            self.value_label.setText("文件类型")
+            self.value_input.setPlaceholderText("例如：tmp, part, crdownload")
+            self.value_hint.setText("支持用逗号分隔多个扩展名。")
+        else:
+            self.value_label.setText("文件名包含的关键词")
+            self.value_input.setPlaceholderText("例如：不要整理")
+            self.value_hint.setText("支持用逗号分隔多个关键词。")
+
+    def rule_data(self) -> dict:
+        rule_type = str(self.type_input.currentData())
+        values = split_values(self.value_input.text())
+        name = self.name_input.text().strip()
+        if not name:
+            if rule_type == "extension":
+                first = normalize_extension_text(values[0]).lstrip(".").upper() if values else "指定"
+                name = "临时文件" if set(value.lower().lstrip(".") for value in values) & {"tmp", "part", "crdownload"} else f"忽略 {first} 文件"
+            else:
+                name = f"忽略{values[0]}文件" if values else "忽略指定文件"
+        data = {"id": self.rule.get("id", ""), "name": name, "type": rule_type, "action": "ignore", "target": "", "enabled": True}
+        if rule_type == "extension":
+            data["extensions"] = [normalize_extension_text(value) for value in values]
+        else:
+            data["keywords"] = values
+        return data
+
+    def _accept_if_valid(self) -> None:
+        if not split_values(self.value_input.text()):
+            self.value_error.setText("请至少填写一个文件类型或关键词。")
+            return
+        self.accept()
 
 
 class SmartSuggestionDialog(QDialog):

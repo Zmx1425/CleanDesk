@@ -51,6 +51,7 @@ class QtLogHandler(logging.Handler):
 class FileProcessingWorker(QThread):
     file_moved = Signal(dict)
     file_skipped = Signal(dict)
+    file_ignored = Signal(dict)
     batch_job_finished = Signal(str)
     conflict_requested = Signal(dict)
     conflict_hint_requested = Signal(str)
@@ -150,15 +151,27 @@ class FileProcessingWorker(QThread):
                 return
             if not path.is_file() or path.parent != Path(base_folder):
                 return
+            matched_rule = find_matching_rule(path, rules)
+            if matched_rule and matched_rule.get("action", "move") == "ignore":
+                self.file_ignored.emit(
+                    {
+                        "filename": path.name,
+                        "original_path": str(path.resolve()),
+                        "rule_name": display_rule_name(matched_rule),
+                        "folder_id": str(job.get("folder_id", "")),
+                        "folder_name": str(job.get("folder_name", "")),
+                        "source_root": str(job.get("source_root", base_folder)),
+                    }
+                )
+                return
             if is_hidden_or_temp_file(path):
                 self.logger.info("Queued file skipped because it is temporary or hidden: %s", path.name)
                 return
-            matched_rule = find_matching_rule(path, rules)
             if not matched_rule:
                 self.engine.process_file(str(path), base_folder, rules)
                 return
             status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode, job)
-            if status in {"moved", "conflict_skipped", "canceled", "no_match"}:
+            if status in {"moved", "conflict_skipped", "canceled", "no_match", "ignored"}:
                 return
             if attempt < len(delays) + 1:
                 self.logger.info("File still unavailable, retrying: %s", path.name)
@@ -292,6 +305,7 @@ class CleanDeskService(QObject):
         self.worker = FileProcessingWorker(self.engine, self.logger)
         self.worker.file_moved.connect(self._record_moved_file)
         self.worker.file_skipped.connect(self._record_skipped_file)
+        self.worker.file_ignored.connect(self._record_ignored_file)
         self.worker.batch_job_finished.connect(self._finish_batch_job)
         self.worker.conflict_requested.connect(self.conflict_requested)
         self.worker.conflict_hint_requested.connect(self.conflict_hint_requested)
@@ -511,6 +525,7 @@ class CleanDeskService(QObject):
 
     def add_rule(self, rule: dict[str, Any]) -> None:
         prepared_rule = dict(rule)
+        prepared_rule["action"] = "move"
         prepared_rule["id"] = prepared_rule.get("id") or uuid4().hex
         prepared_rule["enabled"] = bool(prepared_rule.get("enabled", True))
         prepared_rule["target"] = str(prepared_rule.get("target", "Unsorted")).strip() or "Unsorted"
@@ -538,6 +553,7 @@ class CleanDeskService(QObject):
                 "extensions": extensions,
                 "target": str(suggestion.get("target") or suggestion.get("name") or "整理文件"),
                 "enabled": True,
+                "action": "move",
                 "priority": (len(self.rules) + len(created_rules) + 1) * 10,
             }
             created_rules.append(rule)
@@ -620,6 +636,7 @@ class CleanDeskService(QObject):
             if rule.get("id") == rule_id:
                 prepared_rule = dict(rule)
                 prepared_rule.update(updates)
+                prepared_rule["action"] = rule.get("action", "move")
                 prepared_rule["id"] = rule_id
                 prepared_rule["enabled"] = bool(prepared_rule.get("enabled", True))
                 prepared_rule["target"] = str(prepared_rule.get("target", "Unsorted")).strip() or "Unsorted"
@@ -663,7 +680,9 @@ class CleanDeskService(QObject):
         self.logger.info("Rule moved: %s -> %s", rule_id, target_index)
 
     def reorder_rules(self, rule_ids: list[str]) -> None:
-        rules_by_id = {str(rule.get("id", "")): rule for rule in self.rules}
+        ignore_rules = [rule for rule in self.rules if rule.get("action", "move") == "ignore"]
+        move_rules = [rule for rule in self.rules if rule.get("action", "move") != "ignore"]
+        rules_by_id = {str(rule.get("id", "")): rule for rule in move_rules}
         reordered = []
         seen_ids = set()
         for rule_id in rule_ids:
@@ -673,15 +692,33 @@ class CleanDeskService(QObject):
             reordered.append(rule)
             seen_ids.add(str(rule_id))
 
-        if len(reordered) != len(self.rules):
+        if len(reordered) != len(move_rules):
             self.logger.warning("Rule reorder skipped because the rule id list is incomplete")
             return
 
-        self.rules = assign_rule_priorities(normalize_rules(reordered))
+        self.rules = assign_rule_priorities(normalize_rules([*ignore_rules, *reordered]))
         self.config["rules"] = self.rules
         self._persist_config()
         self.rules_changed.emit(self.rules)
         self.logger.info("Rules reordered by drag and drop")
+
+    def add_ignore_rule(self, rule: dict[str, Any]) -> None:
+        prepared = dict(rule)
+        prepared.update({"id": prepared.get("id") or uuid4().hex, "action": "ignore", "target": "", "enabled": True})
+        ignore_rules = [item for item in self.rules if item.get("action", "move") == "ignore"]
+        move_rules = [item for item in self.rules if item.get("action", "move") != "ignore"]
+        self.rules = assign_rule_priorities(normalize_rules([*ignore_rules, prepared, *move_rules]))
+        self._persist_config()
+        self.rules_changed.emit(self.rules)
+        self.logger.info("Ignore rule added: %s", prepared.get("name", prepared["id"]))
+
+    def update_ignore_rule(self, rule_id: str, updates: dict[str, Any]) -> None:
+        prepared = dict(updates)
+        prepared.update({"action": "ignore", "target": ""})
+        self.update_rule(rule_id, prepared)
+
+    def delete_ignore_rule(self, rule_id: str) -> None:
+        self.delete_rule(rule_id)
 
     @Slot()
     def undo_last_batch(self) -> None:
@@ -966,6 +1003,21 @@ class CleanDeskService(QObject):
                 "detail": str(skip.get("reason") or "已跳过。"),
                 "source_folder_name": str(skip.get("folder_name", "")),
                 "source_root": str(skip.get("source_root", "")),
+            }
+        )
+
+    @Slot(dict)
+    def _record_ignored_file(self, ignored: dict) -> None:
+        self.activity_emitted.emit(
+            {
+                "time": timestamp()[11:16],
+                "status": "ignored",
+                "title": f"已忽略：{ignored.get('filename', '文件')}",
+                "detail": f"命中规则：{ignored.get('rule_name') or '忽略规则'}\n文件已保留在原位置。",
+                "target_path": str(ignored.get("original_path", "")),
+                "target_folder": str(Path(str(ignored.get("original_path", ""))).parent),
+                "source_folder_name": str(ignored.get("folder_name", "")),
+                "source_root": str(ignored.get("source_root", "")),
             }
         )
 
