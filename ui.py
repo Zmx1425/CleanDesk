@@ -60,6 +60,8 @@ class MainWindow(QMainWindow):
         self._layout_mode = ""
         self._rebuilding_layout = False
         self._welcome_prompt_pending = False
+        self._auto_start_scheduled = False
+        self._auto_start_attempted = False
         self._status_hint_token = 0
         self._updating_rules = False
 
@@ -1088,7 +1090,11 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        QTimer.singleShot(0, self._show_welcome_if_needed)
+        QTimer.singleShot(0, self._finish_initial_show)
+
+    def _finish_initial_show(self) -> None:
+        self._show_welcome_if_needed()
+        self._schedule_automatic_start()
 
     def _show_welcome_if_needed(self) -> None:
         if self._welcome_prompt_pending or self.service.config.get("welcome_shown", False):
@@ -1105,6 +1111,33 @@ class MainWindow(QMainWindow):
         self.service.config["welcome_shown"] = True
         self.service.storage.save(self.service.config)
         self._welcome_prompt_pending = False
+
+    def _schedule_automatic_start(self) -> None:
+        if self._auto_start_scheduled or self._auto_start_attempted:
+            return
+        settings = self.service.get_settings() if hasattr(self.service, "get_settings") else {}
+        if not settings.get("auto_start_organizing", False):
+            self._auto_start_attempted = True
+            return
+        self._auto_start_scheduled = True
+        QTimer.singleShot(50, self._run_automatic_start)
+
+    def _run_automatic_start(self) -> None:
+        self._auto_start_scheduled = False
+        self._auto_start_attempted = True
+        if getattr(self.service, "is_running", False):
+            return
+        if not self._has_monitored_folders():
+            self._add_activity(
+                {
+                    "time": "刚刚",
+                    "status": "skipped",
+                    "title": "未自动开始整理",
+                    "detail": "请先添加监控文件夹。",
+                }
+            )
+            return
+        self.service.start()
 
     def _card(self, horizontal: QSizePolicy.Policy, vertical: QSizePolicy.Policy) -> QFrame:
         card = QFrame()
