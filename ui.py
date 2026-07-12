@@ -1731,17 +1731,17 @@ class SettingsDialog(QDialog):
         actions = QHBoxLayout()
         actions.setContentsMargins(20, 12, 20, 20)
         actions.addStretch(1)
-        cancel_button = QPushButton("取消")
-        cancel_button.setObjectName("secondaryButton")
-        cancel_button.setFixedHeight(BUTTON_HEIGHT)
-        cancel_button.clicked.connect(self.reject)
         save_button = QPushButton("保存")
         save_button.setObjectName("primaryButton")
         save_button.setFixedHeight(BUTTON_HEIGHT)
         save_button.setDefault(True)
         save_button.clicked.connect(self._save_settings)
-        actions.addWidget(cancel_button)
+        cancel_button = QPushButton("取消")
+        cancel_button.setObjectName("secondaryButton")
+        cancel_button.setFixedHeight(BUTTON_HEIGHT)
+        cancel_button.clicked.connect(self.reject)
         actions.addWidget(save_button)
+        actions.addWidget(cancel_button)
         outer_layout.addLayout(actions)
 
         self._load_settings()
@@ -1899,6 +1899,12 @@ class SettingsDialog(QDialog):
         box.exec()
         if box.clickedButton() == confirm_button:
             self.clear_activity_callback()
+            completed_box = QMessageBox(self)
+            completed_box.setWindowTitle("清理完成")
+            completed_box.setText("最近活动已清空。")
+            completed_button = completed_box.addButton("确定", QMessageBox.AcceptRole)
+            completed_box.setDefaultButton(completed_button)
+            completed_box.exec()
 
 
 class IgnoreRulesDialog(QDialog):
