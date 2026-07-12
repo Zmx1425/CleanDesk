@@ -6,6 +6,33 @@ from rules import DEFAULT_RULES, assign_rule_priorities, normalize_rules, sort_r
 from utils import folder_compare_key, folder_display_name, normalize_folder_path
 
 
+DEFAULT_SETTINGS = {
+    "auto_start_organizing": False,
+    "scan_existing_on_start": True,
+    "manual_duplicate_policy": "ask",
+    "auto_duplicate_policy": "keep_both",
+    "recent_activity_limit": 50,
+}
+
+
+def normalize_settings(settings: object) -> dict:
+    raw = dict(settings) if isinstance(settings, dict) else {}
+    normalized = dict(raw)
+    for key in ("auto_start_organizing", "scan_existing_on_start"):
+        value = raw.get(key, DEFAULT_SETTINGS[key])
+        normalized[key] = value if isinstance(value, bool) else DEFAULT_SETTINGS[key]
+
+    manual_policy = raw.get("manual_duplicate_policy", DEFAULT_SETTINGS["manual_duplicate_policy"])
+    normalized["manual_duplicate_policy"] = manual_policy if manual_policy in {"ask", "keep_both", "skip"} else "ask"
+
+    auto_policy = raw.get("auto_duplicate_policy", DEFAULT_SETTINGS["auto_duplicate_policy"])
+    normalized["auto_duplicate_policy"] = auto_policy if auto_policy in {"keep_both", "skip"} else "keep_both"
+
+    activity_limit = raw.get("recent_activity_limit", DEFAULT_SETTINGS["recent_activity_limit"])
+    normalized["recent_activity_limit"] = activity_limit if type(activity_limit) is int and activity_limit in {50, 100, 200} else 50
+    return normalized
+
+
 class ConfigStorage:
     def __init__(self, config_path: str | Path = "config.json") -> None:
         self.config_path = Path(config_path)
@@ -23,6 +50,7 @@ class ConfigStorage:
         config = self._default_config()
         config.update(data)
         config["rules"] = assign_rule_priorities(sort_rules(normalize_rules(config.get("rules", []))))
+        config["settings"] = normalize_settings(config.get("settings"))
         self._normalize_folder_config(config)
         return config
 
@@ -38,6 +66,7 @@ class ConfigStorage:
             "monitored_folder": "",
             "welcome_shown": False,
             "rules": assign_rule_priorities(sort_rules(normalize_rules(DEFAULT_RULES))),
+            "settings": dict(DEFAULT_SETTINGS),
         }
         self._normalize_folder_config(config)
         return config

@@ -479,6 +479,8 @@ class MainWindow(QMainWindow):
             self.service.conflict_requested.connect(self._handle_name_conflict_request)
         if hasattr(self.service, "conflict_hint_requested"):
             self.service.conflict_hint_requested.connect(self._show_temporary_status_hint)
+        if hasattr(self.service, "settings_changed"):
+            self.service.settings_changed.connect(self._apply_activity_limit)
         if hasattr(self.service, "conflict_choice_handler"):
             self.service.conflict_choice_handler = self._choose_name_conflict_action
         self.service.error_occurred.connect(self._show_error)
@@ -913,10 +915,18 @@ class MainWindow(QMainWindow):
         item.setSizeHint(row.sizeHint())
         self.activity_list.insertItem(0, item)
         self.activity_list.setItemWidget(item, row)
-        while self.activity_list.count() > 50:
-            self.activity_list.takeItem(self.activity_list.count() - 1)
+        self._apply_activity_limit()
         scrollbar = self.activity_list.verticalScrollBar()
         scrollbar.setValue(scrollbar.minimum())
+        self._refresh_activity_empty_state()
+
+    def _apply_activity_limit(self, settings: dict | None = None) -> None:
+        current_settings = settings
+        if current_settings is None and hasattr(self.service, "get_settings"):
+            current_settings = self.service.get_settings()
+        limit = int((current_settings or {}).get("recent_activity_limit", 50))
+        while self.activity_list.count() > limit:
+            self.activity_list.takeItem(self.activity_list.count() - 1)
         self._refresh_activity_empty_state()
 
     def _refresh_activity_empty_state(self) -> None:

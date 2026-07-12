@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from engine import FileOrganizerEngine
 from rules import assign_rule_priorities, display_rule_name, find_matching_rule, normalize_rules, sort_rules
-from storage import ConfigStorage
+from storage import ConfigStorage, DEFAULT_SETTINGS, normalize_settings
 from utils import (
     configure_logging,
     folder_compare_key,
@@ -79,6 +79,7 @@ class FileProcessingWorker(QThread):
         force: bool = False,
         folder_id: str = "",
         folder_name: str = "",
+        conflict_policy: str = "keep_both",
     ) -> bool:
         normalized_path = str(Path(file_path))
         now = time.monotonic()
@@ -100,6 +101,7 @@ class FileProcessingWorker(QThread):
                 "rules": [dict(rule) for rule in rules],
                 "batch_id": batch_id,
                 "mode": mode,
+                "conflict_policy": conflict_policy,
             }
         )
         return True
@@ -136,6 +138,7 @@ class FileProcessingWorker(QThread):
         rules = [dict(rule) for rule in job.get("rules", [])]
         batch_id = str(job.get("batch_id", ""))
         mode = str(job.get("mode", "auto"))
+        conflict_policy = str(job.get("conflict_policy", "keep_both"))
         if batch_id and batch_id in self.canceled_batches:
             return
         path = Path(file_path)
@@ -170,7 +173,7 @@ class FileProcessingWorker(QThread):
             if not matched_rule:
                 self.engine.process_file(str(path), base_folder, rules)
                 return
-            status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode, job)
+            status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode, conflict_policy, job)
             if status in {"moved", "conflict_skipped", "canceled", "no_match", "ignored"}:
                 return
             if attempt < len(delays) + 1:
@@ -184,12 +187,15 @@ class FileProcessingWorker(QThread):
         batch_id: str,
         matched_rule: dict,
         mode: str,
+        conflict_policy: str,
         job: dict[str, Any],
     ) -> str:
         original_path = path.resolve()
         resolver = None
-        if mode in {"manual", "start_scan"}:
+        if conflict_policy == "ask" and mode in {"manual", "start_scan"}:
             resolver = lambda conflict: self._request_conflict_choice(conflict, batch_id)
+        elif conflict_policy == "skip":
+            resolver = lambda conflict: "skip"
         result = self.engine.process_file_result(str(path), base_folder, rules, resolver)
         status = str(result.get("status", "failed"))
 
@@ -279,11 +285,13 @@ class CleanDeskService(QObject):
     conflict_requested = Signal(dict)
     conflict_hint_requested = Signal(str)
     error_occurred = Signal(str)
+    settings_changed = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
         self.storage = ConfigStorage()
         self.config = self.storage.load()
+        self.settings = normalize_settings(self.config.get("settings"))
         self.rules = assign_rule_priorities(sort_rules(normalize_rules(self.config.get("rules", []))))
         self.monitored_folders = [dict(folder) for folder in self.config.get("monitored_folders", [])]
         self.active_folder_id = str(self.config.get("active_folder_id") or "")
@@ -329,6 +337,21 @@ class CleanDeskService(QObject):
 
     def get_running_folder_count(self) -> int:
         return self.running_folder_count
+
+    def get_settings(self) -> dict[str, Any]:
+        return dict(self.settings)
+
+    def update_settings(self, settings_patch: dict[str, Any]) -> dict[str, Any]:
+        allowed_keys = set(DEFAULT_SETTINGS)
+        patch = settings_patch if isinstance(settings_patch, dict) else {}
+        merged = dict(self.settings)
+        merged.update({key: value for key, value in patch.items() if key in allowed_keys})
+        self.settings = normalize_settings(merged)
+        self.config["settings"] = dict(self.settings)
+        self._persist_config()
+        self.settings_changed.emit(dict(self.settings))
+        self.logger.info("Settings updated")
+        return dict(self.settings)
 
     def set_active_folder(self, folder_id: str) -> dict[str, Any]:
         folder = next((folder for folder in self.monitored_folders if folder.get("id") == folder_id), None)
@@ -414,13 +437,17 @@ class CleanDeskService(QObject):
             self.logger.error("Start skipped, no valid monitored folders")
             return
         self.logger.info("正在启动监听")
-        batch_id = self._create_pending_batch()
-        queued = self._queue_existing_files_for_folders(batch_id, valid_folders, mode="start_scan")
-        if queued:
-            self.logger.info("启动前扫描：发现 %s 个已有文件", queued)
+        batch_id = ""
+        if self.settings.get("scan_existing_on_start", True):
+            batch_id = self._create_pending_batch()
+            queued = self._queue_existing_files_for_folders(batch_id, valid_folders, mode="start_scan")
+            if queued:
+                self.logger.info("启动前扫描：发现 %s 个已有文件", queued)
+            else:
+                self.pending_undo_batches.pop(batch_id, None)
+                self.logger.info("启动前扫描：未发现待处理文件")
         else:
-            self.pending_undo_batches.pop(batch_id, None)
-            self.logger.info("启动前扫描：未发现待处理文件")
+            self.logger.info("启动前扫描：已在设置中关闭")
         try:
             self.watcher.start(valid_folders)
         except RuntimeError as exc:
@@ -478,6 +505,7 @@ class CleanDeskService(QObject):
             mode="auto",
             folder_id=folder_id,
             folder_name=folder_name,
+            conflict_policy=self._duplicate_policy_for_mode("auto"),
         ):
             return
         else:
@@ -517,6 +545,7 @@ class CleanDeskService(QObject):
                 force=True,
                 folder_id=str(folder.get("id", "")),
                 folder_name=str(folder.get("display_name", "")),
+                conflict_policy=self._duplicate_policy_for_mode(mode),
             ):
                 queued += 1
             else:
@@ -924,7 +953,13 @@ class CleanDeskService(QObject):
         self.config["active_folder_id"] = self.active_folder_id
         self.config["monitored_folder"] = self.monitored_folder
         self.config["rules"] = assign_rule_priorities(self.rules)
+        self.config["settings"] = dict(self.settings)
         self.storage.save(self.config)
+
+    def _duplicate_policy_for_mode(self, mode: str) -> str:
+        if mode == "auto":
+            return str(self.settings.get("auto_duplicate_policy", "keep_both"))
+        return str(self.settings.get("manual_duplicate_policy", "ask"))
 
     def _validate_monitored_folder_path(self, path: str, exclude_folder_id: str | None = None) -> str:
         normalized_path = normalize_folder_path(path)
