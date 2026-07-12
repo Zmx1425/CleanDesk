@@ -42,6 +42,17 @@ SPACING = 12
 BUTTON_HEIGHT = 36
 
 
+def about_information_text() -> str:
+    return (
+        f"{APP_NAME}\n\n"
+        f"Version {APP_VERSION}\n\n"
+        "本地自动化文件管家\n\n"
+        "开发者：Zmx\n\n"
+        "所有整理均在本机完成，不上传文件。\n\n"
+        "当前版本为 Beta，建议先使用测试文件夹。"
+    )
+
+
 class MainWindow(QMainWindow):
     def __init__(self, service):
         super().__init__()
@@ -486,19 +497,21 @@ class MainWindow(QMainWindow):
         self.service.error_occurred.connect(self._show_error)
 
     def _build_menu_bar(self) -> None:
+        settings_menu = self.menuBar().addMenu("设置")
+        open_settings_action = settings_menu.addAction("打开设置")
+        open_settings_action.triggered.connect(self._show_settings)
         help_menu = self.menuBar().addMenu("帮助")
         about_action = help_menu.addAction(f"关于 {APP_NAME}")
         about_action.triggered.connect(self._show_about)
+
+    def _show_settings(self) -> None:
+        SettingsDialog(self, self.service, self._clear_recent_activity).exec()
 
     def _show_about(self) -> None:
         QMessageBox.about(
             self,
             f"关于 {APP_NAME}",
-            f"{APP_NAME}\n\n"
-            f"Version {APP_VERSION}\n\n"
-            "本地文件自动整理工具\n\n"
-            "开发者：Zmx\n\n"
-            "当前版本为 Beta，建议先使用测试文件夹。",
+            about_information_text(),
         )
 
     def _refresh_from_service(self) -> None:
@@ -920,6 +933,10 @@ class MainWindow(QMainWindow):
         scrollbar.setValue(scrollbar.minimum())
         self._refresh_activity_empty_state()
 
+    def _clear_recent_activity(self) -> None:
+        self.activity_list.clear()
+        self._refresh_activity_empty_state()
+
     def _apply_activity_limit(self, settings: dict | None = None) -> None:
         current_settings = settings
         if current_settings is None and hasattr(self.service, "get_settings"):
@@ -1157,6 +1174,11 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
             }
             QFrame#card {
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 12px;
+            }
+            QFrame#settingsSection {
                 background: #FFFFFF;
                 border: 1px solid #E5E7EB;
                 border-radius: 12px;
@@ -1641,6 +1663,209 @@ class ActivityListItem(QWidget):
         if detail:
             parts.append(detail)
         return "\n".join(parts)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent, service, clear_activity_callback):
+        super().__init__(parent)
+        self.service = service
+        self.clear_activity_callback = clear_activity_callback
+        self.setWindowTitle("设置")
+        self.setMinimumSize(640, 600)
+        self.resize(680, 640)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(20, 20, 20, 16)
+        page_layout.setSpacing(12)
+
+        page_layout.addWidget(self._general_section())
+        page_layout.addWidget(self._organizing_section())
+        page_layout.addWidget(self._activity_section())
+        page_layout.addWidget(self._about_section())
+        page_layout.addStretch(1)
+        scroll.setWidget(page)
+        outer_layout.addWidget(scroll, 1)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(20, 12, 20, 20)
+        actions.addStretch(1)
+        cancel_button = QPushButton("取消")
+        cancel_button.setObjectName("secondaryButton")
+        cancel_button.setFixedHeight(BUTTON_HEIGHT)
+        cancel_button.clicked.connect(self.reject)
+        save_button = QPushButton("保存")
+        save_button.setObjectName("primaryButton")
+        save_button.setFixedHeight(BUTTON_HEIGHT)
+        save_button.setDefault(True)
+        save_button.clicked.connect(self._save_settings)
+        actions.addWidget(cancel_button)
+        actions.addWidget(save_button)
+        outer_layout.addLayout(actions)
+
+        self._load_settings()
+
+    def _section(self, title: str, description: str = "") -> tuple[QFrame, QVBoxLayout]:
+        section = QFrame()
+        section.setObjectName("settingsSection")
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        layout.addWidget(title_label)
+        if description:
+            hint = QLabel(description)
+            hint.setObjectName("caption")
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
+        return section, layout
+
+    def _setting_row(self, label_text: str, control: QWidget, description: str = "") -> QWidget:
+        row = QWidget()
+        row.setMinimumWidth(0)
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(5)
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
+        label = QLabel(label_text)
+        label.setMinimumWidth(0)
+        label.setWordWrap(True)
+        top.addWidget(label, 1)
+        control.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        top.addWidget(control, 0, Qt.AlignRight | Qt.AlignVCenter)
+        layout.addLayout(top)
+        if description:
+            detail = QLabel(description)
+            detail.setObjectName("caption")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            layout.addWidget(detail)
+        return row
+
+    def _general_section(self) -> QFrame:
+        section, layout = self._section("常规")
+        self.auto_start_input = QCheckBox("启用")
+        layout.addWidget(
+            self._setting_row(
+                "启动 CleanDesk 时自动开始整理",
+                self.auto_start_input,
+                "打开 CleanDesk 后自动开始监听已添加的文件夹。将在下次启动时生效。",
+            )
+        )
+        self.scan_existing_input = QCheckBox("启用")
+        layout.addWidget(
+            self._setting_row(
+                "开始整理时扫描已有文件",
+                self.scan_existing_input,
+                "开始自动整理时，先处理文件夹中已经存在的文件。关闭后只监听新增文件；“整理当前文件夹”不受影响。",
+            )
+        )
+        return section
+
+    def _organizing_section(self) -> QFrame:
+        section, layout = self._section("整理")
+        self.manual_duplicate_input = QComboBox()
+        self.manual_duplicate_input.addItem("每次询问", "ask")
+        self.manual_duplicate_input.addItem("自动保留两个", "keep_both")
+        self.manual_duplicate_input.addItem("自动跳过", "skip")
+        layout.addWidget(
+            self._setting_row(
+                "手动整理遇到同名文件",
+                self.manual_duplicate_input,
+                "适用于“整理当前文件夹”和开始自动整理前的已有文件扫描。",
+            )
+        )
+        self.auto_duplicate_input = QComboBox()
+        self.auto_duplicate_input.addItem("自动保留两个", "keep_both")
+        self.auto_duplicate_input.addItem("自动跳过", "skip")
+        layout.addWidget(
+            self._setting_row(
+                "自动监听遇到同名文件",
+                self.auto_duplicate_input,
+                "自动监听不会弹出重名确认窗口，避免后台整理被阻塞。",
+            )
+        )
+        return section
+
+    def _activity_section(self) -> QFrame:
+        section, layout = self._section("最近活动")
+        self.activity_limit_input = QComboBox()
+        for limit in (50, 100, 200):
+            self.activity_limit_input.addItem(str(limit), limit)
+        layout.addWidget(
+            self._setting_row(
+                "最近活动最多保留",
+                self.activity_limit_input,
+                "保存后会立即按新上限裁剪首页显示的活动记录。",
+            )
+        )
+        clear_button = QPushButton("清空最近活动")
+        clear_button.setObjectName("secondaryButton")
+        clear_button.setFixedHeight(BUTTON_HEIGHT)
+        clear_button.clicked.connect(self._confirm_clear_activity)
+        layout.addWidget(
+            self._setting_row(
+                "清空最近活动",
+                clear_button,
+                "不会删除详细日志，也不会影响撤销上一次整理。",
+            )
+        )
+        return section
+
+    def _about_section(self) -> QFrame:
+        section, layout = self._section("关于")
+        information = QLabel(about_information_text())
+        information.setObjectName("caption")
+        information.setWordWrap(True)
+        information.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(information)
+        return section
+
+    def _load_settings(self) -> None:
+        settings = self.service.get_settings()
+        self.auto_start_input.setChecked(bool(settings.get("auto_start_organizing", False)))
+        self.scan_existing_input.setChecked(bool(settings.get("scan_existing_on_start", True)))
+        self._set_combo_value(self.manual_duplicate_input, settings.get("manual_duplicate_policy", "ask"))
+        self._set_combo_value(self.auto_duplicate_input, settings.get("auto_duplicate_policy", "keep_both"))
+        self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
+
+    def _set_combo_value(self, combo: QComboBox, value) -> None:
+        index = combo.findData(value)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _save_settings(self) -> None:
+        self.service.update_settings(
+            {
+                "auto_start_organizing": self.auto_start_input.isChecked(),
+                "scan_existing_on_start": self.scan_existing_input.isChecked(),
+                "manual_duplicate_policy": self.manual_duplicate_input.currentData(),
+                "auto_duplicate_policy": self.auto_duplicate_input.currentData(),
+                "recent_activity_limit": self.activity_limit_input.currentData(),
+            }
+        )
+        self.accept()
+
+    def _confirm_clear_activity(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("清空最近活动")
+        box.setText("确定要清空首页显示的最近活动吗？\n这不会删除详细日志，也不会影响撤销上一次整理。")
+        confirm_button = box.addButton("确认", QMessageBox.DestructiveRole)
+        cancel_button = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        if box.clickedButton() == confirm_button:
+            self.clear_activity_callback()
 
 
 class IgnoreRulesDialog(QDialog):
