@@ -21,6 +21,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    app.setQuitOnLastWindowClosed(False)
     icon_path = resource_path("assets/cleandesk.ico")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))

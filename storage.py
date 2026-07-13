@@ -12,6 +12,7 @@ DEFAULT_SETTINGS = {
     "manual_duplicate_policy": "ask",
     "auto_duplicate_policy": "keep_both",
     "recent_activity_limit": 50,
+    "close_behavior": "exit",
 }
 
 
@@ -30,6 +31,9 @@ def normalize_settings(settings: object) -> dict:
 
     activity_limit = raw.get("recent_activity_limit", DEFAULT_SETTINGS["recent_activity_limit"])
     normalized["recent_activity_limit"] = activity_limit if type(activity_limit) is int and activity_limit in {50, 100, 200} else 50
+
+    close_behavior = raw.get("close_behavior", DEFAULT_SETTINGS["close_behavior"])
+    normalized["close_behavior"] = close_behavior if close_behavior in {"exit", "minimize_to_tray"} else "exit"
     return normalized
 
 

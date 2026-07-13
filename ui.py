@@ -23,9 +23,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QSystemTrayIcon,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -64,6 +67,8 @@ class MainWindow(QMainWindow):
         self._auto_start_attempted = False
         self._status_hint_token = 0
         self._updating_rules = False
+        self._tray_hint_shown = False
+        self._application_exit_requested = False
 
         self.path_label = QLabel()
         self.folder_title_label = QLabel()
@@ -89,6 +94,7 @@ class MainWindow(QMainWindow):
         self.suggestion_button = QPushButton("智能整理建议")
 
         self._build_window()
+        self._build_system_tray()
         self._bind_service()
         self._refresh_from_service()
         QTimer.singleShot(0, self.update_responsive_layout)
@@ -506,6 +512,53 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction(f"关于 {APP_NAME}")
         about_action.triggered.connect(self._show_about)
 
+    def _build_system_tray(self) -> None:
+        self._tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+        tray_icon = QApplication.windowIcon()
+        if tray_icon.isNull():
+            tray_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
+
+        self.tray_icon = QSystemTrayIcon(tray_icon, self)
+        self.tray_icon.setToolTip(APP_NAME)
+        tray_menu = QMenu(self)
+        show_action = tray_menu.addAction(f"显示 {APP_NAME}")
+        show_action.triggered.connect(self._restore_from_tray)
+        tray_menu.addSeparator()
+        self.tray_start_action = tray_menu.addAction("开始自动整理")
+        self.tray_start_action.triggered.connect(self._handle_start_clicked)
+        self.tray_stop_action = tray_menu.addAction("停止自动整理")
+        self.tray_stop_action.triggered.connect(self.service.stop)
+        settings_action = tray_menu.addAction("打开设置")
+        settings_action.triggered.connect(self._open_settings_from_tray)
+        tray_menu.addSeparator()
+        exit_action = tray_menu.addAction("退出")
+        exit_action.triggered.connect(self._exit_application)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._handle_tray_activation)
+        if self._tray_available:
+            self.tray_icon.show()
+
+    def _restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _handle_tray_activation(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._restore_from_tray()
+
+    def _open_settings_from_tray(self) -> None:
+        self._restore_from_tray()
+        QTimer.singleShot(0, self._show_settings)
+
+    def _exit_application(self) -> None:
+        if self._application_exit_requested:
+            return
+        self._application_exit_requested = True
+        self.service.stop()
+        self.tray_icon.hide()
+        QApplication.quit()
+
     def _show_settings(self) -> None:
         SettingsDialog(self, self.service, self._clear_recent_activity).exec()
 
@@ -845,6 +898,9 @@ class MainWindow(QMainWindow):
         self.status_badge.style().polish(self.status_badge)
 
         self.stop_button.setEnabled(running)
+        if hasattr(self, "tray_start_action"):
+            self.tray_start_action.setEnabled(not running)
+            self.tray_stop_action.setEnabled(running)
         self._refresh_folder_list()
 
     def _show_undo_completed_hint(self, result: dict) -> None:
@@ -1087,6 +1143,27 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.update_responsive_layout()
+
+    def closeEvent(self, event) -> None:
+        settings = self.service.get_settings() if hasattr(self.service, "get_settings") else {}
+        if (
+            not self._application_exit_requested
+            and settings.get("close_behavior", "exit") == "minimize_to_tray"
+            and self._tray_available
+        ):
+            event.ignore()
+            self.hide()
+            if not self._tray_hint_shown:
+                self._tray_hint_shown = True
+                self.tray_icon.showMessage(
+                    APP_NAME,
+                    "CleanDesk 已最小化到系统托盘。\n你可以从托盘图标重新打开窗口。",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+            return
+        event.accept()
+        self._exit_application()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1804,6 +1881,16 @@ class SettingsDialog(QDialog):
                 "开始自动整理时，先处理文件夹中已经存在的文件。关闭后只监听新增文件；“整理当前文件夹”不受影响。",
             )
         )
+        self.close_behavior_input = QComboBox()
+        self.close_behavior_input.addItem("直接退出", "exit")
+        self.close_behavior_input.addItem("最小化到系统托盘", "minimize_to_tray")
+        layout.addWidget(
+            self._setting_row(
+                "关闭窗口时",
+                self.close_behavior_input,
+                "选择“最小化到系统托盘”后，点击关闭按钮不会退出 CleanDesk，整理服务会继续运行。",
+            )
+        )
         return section
 
     def _organizing_section(self) -> QFrame:
@@ -1872,6 +1959,7 @@ class SettingsDialog(QDialog):
         self._set_combo_value(self.manual_duplicate_input, settings.get("manual_duplicate_policy", "ask"))
         self._set_combo_value(self.auto_duplicate_input, settings.get("auto_duplicate_policy", "keep_both"))
         self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
+        self._set_combo_value(self.close_behavior_input, settings.get("close_behavior", "exit"))
 
     def _set_combo_value(self, combo: QComboBox, value) -> None:
         index = combo.findData(value)
@@ -1885,6 +1973,7 @@ class SettingsDialog(QDialog):
                 "manual_duplicate_policy": self.manual_duplicate_input.currentData(),
                 "auto_duplicate_policy": self.auto_duplicate_input.currentData(),
                 "recent_activity_limit": self.activity_limit_input.currentData(),
+                "close_behavior": self.close_behavior_input.currentData(),
             }
         )
         self.accept()
