@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from version import APP_NAME, APP_VERSION
+from startup import StartupError, is_launch_at_login_enabled, set_launch_at_login_enabled
 
 
 BREAKPOINT_WIDTH = 1100
@@ -1891,6 +1892,14 @@ class SettingsDialog(QDialog):
                 "选择“最小化到系统托盘”后，点击关闭按钮不会退出 CleanDesk，整理服务会继续运行。",
             )
         )
+        self.launch_at_login_input = QCheckBox("启用")
+        layout.addWidget(
+            self._setting_row(
+                "Windows 登录后自动启动 CleanDesk",
+                self.launch_at_login_input,
+                "登录 Windows 后自动启动 CleanDesk。关闭后不会删除软件或现有设置。",
+            )
+        )
         return section
 
     def _organizing_section(self) -> QFrame:
@@ -1960,22 +1969,38 @@ class SettingsDialog(QDialog):
         self._set_combo_value(self.auto_duplicate_input, settings.get("auto_duplicate_policy", "keep_both"))
         self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
         self._set_combo_value(self.close_behavior_input, settings.get("close_behavior", "exit"))
+        self._launch_at_login_enabled = is_launch_at_login_enabled()
+        self.launch_at_login_input.setChecked(self._launch_at_login_enabled)
 
     def _set_combo_value(self, combo: QComboBox, value) -> None:
         index = combo.findData(value)
         combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _save_settings(self) -> None:
-        self.service.update_settings(
-            {
-                "auto_start_organizing": self.auto_start_input.isChecked(),
-                "scan_existing_on_start": self.scan_existing_input.isChecked(),
-                "manual_duplicate_policy": self.manual_duplicate_input.currentData(),
-                "auto_duplicate_policy": self.auto_duplicate_input.currentData(),
-                "recent_activity_limit": self.activity_limit_input.currentData(),
-                "close_behavior": self.close_behavior_input.currentData(),
-            }
-        )
+        launch_at_login = self.launch_at_login_input.isChecked()
+        system_state_changed = launch_at_login != self._launch_at_login_enabled
+        try:
+            if system_state_changed:
+                set_launch_at_login_enabled(launch_at_login)
+            self.service.update_settings(
+                {
+                    "auto_start_organizing": self.auto_start_input.isChecked(),
+                    "scan_existing_on_start": self.scan_existing_input.isChecked(),
+                    "manual_duplicate_policy": self.manual_duplicate_input.currentData(),
+                    "auto_duplicate_policy": self.auto_duplicate_input.currentData(),
+                    "recent_activity_limit": self.activity_limit_input.currentData(),
+                    "close_behavior": self.close_behavior_input.currentData(),
+                    "launch_at_login": launch_at_login,
+                }
+            )
+        except (StartupError, OSError) as exc:
+            if system_state_changed:
+                try:
+                    set_launch_at_login_enabled(self._launch_at_login_enabled)
+                except (StartupError, OSError):
+                    pass
+            QMessageBox.warning(self, "无法保存开机启动设置", str(exc) or "请稍后重试。")
+            return
         self.accept()
 
     def _confirm_clear_activity(self) -> None:

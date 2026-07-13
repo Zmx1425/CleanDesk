@@ -13,13 +13,14 @@ DEFAULT_SETTINGS = {
     "auto_duplicate_policy": "keep_both",
     "recent_activity_limit": 50,
     "close_behavior": "exit",
+    "launch_at_login": False,
 }
 
 
 def normalize_settings(settings: object) -> dict:
     raw = dict(settings) if isinstance(settings, dict) else {}
     normalized = dict(raw)
-    for key in ("auto_start_organizing", "scan_existing_on_start"):
+    for key in ("auto_start_organizing", "scan_existing_on_start", "launch_at_login"):
         value = raw.get(key, DEFAULT_SETTINGS[key])
         normalized[key] = value if isinstance(value, bool) else DEFAULT_SETTINGS[key]
 
