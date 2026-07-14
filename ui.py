@@ -49,11 +49,11 @@ BUTTON_HEIGHT = 36
 def about_information_text() -> str:
     return (
         f"{APP_NAME}\n\n"
-        f"Version {APP_VERSION}\n\n"
+        f"{APP_VERSION}\n\n"
         "本地自动化文件管家\n\n"
         "开发者：Zmx\n\n"
-        "所有整理均在本机完成，不上传文件。\n\n"
-        "当前版本为 Beta，建议先使用测试文件夹。"
+        "所有整理都在本机完成，不会上传文件。\n\n"
+        "当前版本仍处于 Beta 阶段，建议先使用测试文件夹。"
     )
 
 
@@ -1873,17 +1873,17 @@ class SettingsDialog(QDialog):
         self.auto_start_input = QCheckBox("启用")
         layout.addWidget(
             self._setting_row(
-                "启动 CleanDesk 时自动开始整理",
+                "启动后自动整理",
                 self.auto_start_input,
-                "打开 CleanDesk 后自动开始监听已添加的文件夹。将在下次启动时生效。",
+                "打开 CleanDesk 后，自动开始监听已添加的文件夹。\n将在下次启动时生效。",
             )
         )
         self.scan_existing_input = QCheckBox("启用")
         layout.addWidget(
             self._setting_row(
-                "开始整理时扫描已有文件",
+                "开始时整理已有文件",
                 self.scan_existing_input,
-                "开始自动整理时，先处理文件夹中已经存在的文件。关闭后只监听新增文件；“整理当前文件夹”不受影响。",
+                "开始自动整理时，先处理文件夹中已经存在的文件。\n关闭后，只整理之后新增的文件。",
             )
         )
         self.close_behavior_input = QComboBox()
@@ -1893,15 +1893,15 @@ class SettingsDialog(QDialog):
             self._setting_row(
                 "关闭窗口时",
                 self.close_behavior_input,
-                "选择“最小化到系统托盘”后，点击关闭按钮不会退出 CleanDesk，整理服务会继续运行。",
+                "选择“最小化到系统托盘”后，点击关闭按钮不会退出 CleanDesk，自动整理会继续运行。",
             )
         )
         self.launch_at_login_input = QCheckBox("启用")
         layout.addWidget(
             self._setting_row(
-                "Windows 登录后自动启动 CleanDesk",
+                "开机自动启动",
                 self.launch_at_login_input,
-                "登录 Windows 后自动启动 CleanDesk。关闭后不会删除软件或现有设置。",
+                "登录 Windows 后自动启动 CleanDesk。",
             )
         )
         return section
@@ -1916,7 +1916,7 @@ class SettingsDialog(QDialog):
             self._setting_row(
                 "手动整理遇到同名文件",
                 self.manual_duplicate_input,
-                "适用于“整理当前文件夹”和开始自动整理前的已有文件扫描。",
+                "适用于“整理当前文件夹”和开始自动整理前的已有文件。",
             )
         )
         self.auto_duplicate_input = QComboBox()
@@ -1924,9 +1924,9 @@ class SettingsDialog(QDialog):
         self.auto_duplicate_input.addItem("自动跳过", "skip")
         layout.addWidget(
             self._setting_row(
-                "自动监听遇到同名文件",
+                "自动整理遇到同名文件",
                 self.auto_duplicate_input,
-                "自动监听不会弹出重名确认窗口，避免后台整理被阻塞。",
+                "后台自动整理不会弹出确认窗口，避免整理被中断。",
             )
         )
         return section
@@ -1938,9 +1938,9 @@ class SettingsDialog(QDialog):
             self.activity_limit_input.addItem(str(limit), limit)
         layout.addWidget(
             self._setting_row(
-                "最近活动最多保留",
+                "最多保留",
                 self.activity_limit_input,
-                "保存后会立即按新上限裁剪首页显示的活动记录。",
+                "保存后，首页只保留最近的活动记录。",
             )
         )
         clear_button = QPushButton("清空最近活动")
@@ -1951,7 +1951,7 @@ class SettingsDialog(QDialog):
             self._setting_row(
                 "清空最近活动",
                 clear_button,
-                "不会删除详细日志，也不会影响撤销上一次整理。",
+                "只清空首页显示，不会删除详细日志，也不会影响撤销。",
             )
         )
         return section
