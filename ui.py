@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from version import APP_NAME, APP_VERSION
-from startup import StartupError, is_launch_at_login_enabled, set_launch_at_login_enabled
+from startup import StartupError, has_launch_at_login_entry, is_launch_at_login_enabled, set_launch_at_login_enabled
 
 
 BREAKPOINT_WIDTH = 1100
@@ -1170,8 +1170,12 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         QTimer.singleShot(0, self._finish_initial_show)
 
-    def _finish_initial_show(self) -> None:
-        self._show_welcome_if_needed()
+    def initialize_hidden_startup(self) -> None:
+        QTimer.singleShot(0, lambda: self._finish_initial_show(show_welcome=False))
+
+    def _finish_initial_show(self, show_welcome: bool = True) -> None:
+        if show_welcome:
+            self._show_welcome_if_needed()
         self._schedule_automatic_start()
 
     def _show_welcome_if_needed(self) -> None:
@@ -1970,6 +1974,7 @@ class SettingsDialog(QDialog):
         self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
         self._set_combo_value(self.close_behavior_input, settings.get("close_behavior", "exit"))
         self._launch_at_login_enabled = is_launch_at_login_enabled()
+        self._launch_at_login_registered = has_launch_at_login_entry()
         self.launch_at_login_input.setChecked(self._launch_at_login_enabled)
 
     def _set_combo_value(self, combo: QComboBox, value) -> None:
@@ -1979,6 +1984,8 @@ class SettingsDialog(QDialog):
     def _save_settings(self) -> None:
         launch_at_login = self.launch_at_login_input.isChecked()
         system_state_changed = launch_at_login != self._launch_at_login_enabled
+        if not launch_at_login and self._launch_at_login_registered:
+            system_state_changed = True
         try:
             if system_state_changed:
                 set_launch_at_login_enabled(launch_at_login)

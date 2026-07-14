@@ -6,6 +6,7 @@ from typing import Protocol
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "CleanDesk"
+STARTUP_ARGUMENT = "--startup"
 
 
 class StartupError(RuntimeError):
@@ -62,6 +63,12 @@ def _quoted(path: Path) -> str:
     return f'"{path}"'
 
 
+def _require_file(path: Path, message: str) -> Path:
+    if not path.is_file():
+        raise StartupError(message)
+    return path
+
+
 def build_launch_command(
     *,
     executable: str | Path | None = None,
@@ -71,10 +78,14 @@ def build_launch_command(
     executable_path = Path(executable or sys.executable).resolve()
     is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
     if is_frozen:
-        return _quoted(executable_path)
+        _require_file(executable_path, "未找到 CleanDesk 可执行文件，无法启用开机启动。")
+        return f"{_quoted(executable_path)} {STARTUP_ARGUMENT}"
 
     main_script = Path(script_path or (Path(__file__).resolve().parent / "main.py")).resolve()
-    return f"{_quoted(executable_path)} {_quoted(main_script)}"
+    pythonw_path = executable_path if executable_path.name.casefold() == "pythonw.exe" else executable_path.with_name("pythonw.exe")
+    _require_file(pythonw_path, "未找到与当前 Python 对应的 pythonw.exe，无法启用开机启动。")
+    _require_file(main_script, "未找到 CleanDesk 启动文件 main.py，无法启用开机启动。")
+    return f"{_quoted(pythonw_path)} {_quoted(main_script)} {STARTUP_ARGUMENT}"
 
 
 def is_launch_at_login_enabled(
@@ -90,8 +101,19 @@ def is_launch_at_login_enabled(
     if not stored_command:
         return False
 
-    current_command = expected_command or build_launch_command()
+    try:
+        current_command = expected_command or build_launch_command()
+    except StartupError:
+        return False
     return os.path.normcase(stored_command.strip()).casefold() == os.path.normcase(current_command).casefold()
+
+
+def has_launch_at_login_entry(backend: RegistryBackend | None = None) -> bool:
+    registry = backend or WindowsRegistryBackend()
+    try:
+        return bool(registry.read_value(VALUE_NAME))
+    except StartupError:
+        return False
 
 
 def set_launch_at_login_enabled(
