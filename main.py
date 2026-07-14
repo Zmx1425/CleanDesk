@@ -3,9 +3,10 @@ import sys
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from service import CleanDeskService
+from single_instance import SHOW_MESSAGE, SingleInstanceError, SingleInstanceManager
 from startup import STARTUP_ARGUMENT
 from ui import MainWindow
 from version import APP_NAME
@@ -30,8 +31,18 @@ def main(arguments: list[str] | None = None) -> int:
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
+    instance_manager = SingleInstanceManager()
+    try:
+        is_primary_instance = instance_manager.acquire("startup" if startup_mode else SHOW_MESSAGE)
+    except SingleInstanceError as exc:
+        QMessageBox.critical(None, APP_NAME, str(exc))
+        return 1
+    if not is_primary_instance:
+        return 0
+
     service = CleanDeskService()
     window = MainWindow(service)
+    instance_manager.show_requested.connect(window._restore_from_tray)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     if startup_mode:
@@ -40,6 +51,7 @@ def main(arguments: list[str] | None = None) -> int:
         window.show()
 
     exit_code = app.exec()
+    instance_manager.close()
     service.shutdown()
     return exit_code
 
