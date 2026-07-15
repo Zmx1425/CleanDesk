@@ -106,9 +106,9 @@ class NotificationManager(QObject):
         if not filenames:
             return
         if len(filenames) == 1:
-            message = f"“{filenames[0]}”因名称重复未整理。"
+            message = f"“{filenames[0]}”因名称重复，已跳过整理。"
         else:
-            message = f"{len(filenames)} 个文件因名称重复未整理。"
+            message = f"{len(filenames)} 个文件因名称重复，已跳过整理。"
         self.notify(message)
 
     def shutdown(self) -> None:

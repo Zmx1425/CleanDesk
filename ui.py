@@ -1303,7 +1303,7 @@ class MainWindow(QMainWindow):
         valid_count = int(result.get("valid_count", 0))
         if self._startup_mode and not self.isVisible() and not valid_count:
             return
-        suffix = "其他文件夹将继续整理。" if valid_count else "请打开 CleanDesk 检查。"
+        suffix = "其他文件夹会继续整理。" if valid_count else "请打开 CleanDesk 检查。"
         if len(names) == 1:
             message = f"“{names[0]}”当前不可用，{suffix}"
         else:
@@ -1313,13 +1313,33 @@ class MainWindow(QMainWindow):
     def _notify_manual_batch_completed(self, summary: dict) -> None:
         if str(summary.get("mode", "")) != "manual":
             return
+        active_folder = self.service.get_active_folder() or {}
+        folder_path = str(active_folder.get("path", "")).strip()
+        folder_name = str(active_folder.get("display_name", "")).strip()
+        if not folder_name and folder_path:
+            folder_name = Path(folder_path).name
+        folder_name = folder_name or "当前文件夹"
+
         moved = int(summary.get("moved", 0))
         ignored = int(summary.get("ignored", 0))
         skipped = int(summary.get("skipped", 0))
-        if moved or ignored or skipped:
-            message = f"整理完成：移动 {moved} 个，忽略 {ignored} 个，跳过 {skipped} 个。"
+        if not (moved or ignored or skipped):
+            message = f"{folder_name} 暂无需要整理的文件。"
+        elif moved and not skipped and not ignored:
+            message = f"{folder_name} 整理完成：已整理 {moved} 个文件。"
+        elif skipped and not moved and not ignored:
+            message = f"{folder_name} 整理完成：{skipped} 个文件因名称重复被跳过。"
+        elif ignored and not moved and not skipped:
+            message = f"{folder_name} 整理完成：{ignored} 个文件已按规则忽略。"
         else:
-            message = "未发现可整理的文件。"
+            parts = []
+            if moved:
+                parts.append(f"已整理 {moved} 个")
+            if skipped:
+                parts.append(f"跳过 {skipped} 个")
+            if ignored:
+                parts.append(f"忽略 {ignored} 个")
+            message = f"{folder_name} 整理完成：{'，'.join(parts)}。"
         self.notification_manager.notify(message)
 
     def _card(self, horizontal: QSizePolicy.Policy, vertical: QSizePolicy.Policy) -> QFrame:
