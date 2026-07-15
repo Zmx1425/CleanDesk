@@ -7,6 +7,14 @@ from PySide6.QtWidgets import QSystemTrayIcon
 from version import APP_NAME
 
 
+NOTIFICATION_SHOWN = "shown"
+NOTIFICATION_DISABLED = "disabled"
+NOTIFICATION_TRAY_UNAVAILABLE = "tray_unavailable"
+NOTIFICATION_UNSUPPORTED = "unsupported"
+NOTIFICATION_SUPPRESSED = "suppressed"
+NOTIFICATION_FAILED = "failed"
+
+
 class NotificationManager(QObject):
     def __init__(
         self,
@@ -35,25 +43,52 @@ class NotificationManager(QObject):
             self.logger.exception("Unable to read notification setting")
             return True
 
-    def notify(self, message: str, *, allow_foreground: bool = False) -> bool:
-        if self.shutting_down or not self.is_enabled():
-            return False
+    def notify(
+        self,
+        message: str,
+        *,
+        allow_foreground: bool = False,
+        bypass_enabled: bool = False,
+    ) -> str:
+        if self.shutting_down:
+            return NOTIFICATION_FAILED
+        if not bypass_enabled and not self.is_enabled():
+            self.logger.info("Notification skipped because notifications are disabled")
+            return NOTIFICATION_DISABLED
         try:
+            if self.tray_icon is None:
+                self.logger.warning("Notification skipped because the tray icon is missing")
+                return NOTIFICATION_TRAY_UNAVAILABLE
             if not allow_foreground and self.foreground_provider():
-                return False
-            if not QSystemTrayIcon.isSystemTrayAvailable() or not self.tray_icon.isVisible():
-                self.logger.info("Notification skipped because the system tray is unavailable")
-                return False
+                self.logger.info("Notification suppressed while the main window is in the foreground")
+                return NOTIFICATION_SUPPRESSED
+            tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+            tray_visible = self.tray_icon.isVisible()
+            supports_messages = QSystemTrayIcon.supportsMessages()
+            self.logger.info(
+                "Notification diagnostics: enabled=%s, tray_available=%s, tray_visible=%s, supports_messages=%s",
+                self.is_enabled(),
+                tray_available,
+                tray_visible,
+                supports_messages,
+            )
+            if not tray_available or not tray_visible:
+                self.logger.warning("Notification skipped because the system tray is unavailable")
+                return NOTIFICATION_TRAY_UNAVAILABLE
+            if not supports_messages:
+                self.logger.warning("Notification skipped because tray messages are unsupported")
+                return NOTIFICATION_UNSUPPORTED
             self.tray_icon.showMessage(
                 APP_NAME,
                 message,
                 QSystemTrayIcon.MessageIcon.Information,
                 5000,
             )
-            return True
+            self.logger.info("Notification requested from QSystemTrayIcon: %s", message)
+            return NOTIFICATION_SHOWN
         except Exception:
             self.logger.exception("Unable to show system tray notification")
-            return False
+            return NOTIFICATION_FAILED
 
     def aggregate_duplicate_skip(self, filename: str) -> None:
         if self.shutting_down or not self.is_enabled():

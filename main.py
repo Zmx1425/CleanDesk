@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from pathlib import Path
@@ -12,6 +13,22 @@ from ui import MainWindow
 from version import APP_NAME
 
 
+WINDOWS_APP_USER_MODEL_ID = "CleanDesk.Zmx.CleanDesk"
+
+
+def set_windows_app_user_model_id() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        result = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_USER_MODEL_ID)
+        return result == 0
+    except Exception:
+        logging.getLogger(__name__).exception("Unable to set Windows AppUserModelID")
+        return False
+
+
 def resource_path(relative_path: str) -> Path:
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base_path / relative_path
@@ -22,6 +39,7 @@ def main(arguments: list[str] | None = None) -> int:
     startup_mode = STARTUP_ARGUMENT in launch_arguments[1:]
     qt_arguments = [argument for argument in launch_arguments if argument != STARTUP_ARGUMENT]
     os.chdir(Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent)
+    set_windows_app_user_model_id()
 
     app = QApplication(qt_arguments)
     app.setApplicationName(APP_NAME)
