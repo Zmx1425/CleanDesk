@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from version import APP_NAME, APP_VERSION
+from notifications import NotificationManager
 from startup import StartupError, has_launch_at_login_entry, is_launch_at_login_enabled, set_launch_at_login_enabled
 
 
@@ -70,6 +71,9 @@ class MainWindow(QMainWindow):
         self._updating_rules = False
         self._tray_hint_shown = False
         self._application_exit_requested = False
+        self._startup_mode = False
+        self._auto_start_success_notified = False
+        self._auto_start_failure_notified = False
 
         self.path_label = QLabel()
         self.folder_title_label = QLabel()
@@ -501,6 +505,12 @@ class MainWindow(QMainWindow):
             self.service.conflict_hint_requested.connect(self._show_temporary_status_hint)
         if hasattr(self.service, "settings_changed"):
             self.service.settings_changed.connect(self._apply_activity_limit)
+        if hasattr(self.service, "folders_unavailable"):
+            self.service.folders_unavailable.connect(self._notify_unavailable_folders)
+        if hasattr(self.service, "auto_duplicate_skipped"):
+            self.service.auto_duplicate_skipped.connect(self.notification_manager.aggregate_duplicate_skip)
+        if hasattr(self.service, "batch_completed"):
+            self.service.batch_completed.connect(self._notify_manual_batch_completed)
         if hasattr(self.service, "conflict_choice_handler"):
             self.service.conflict_choice_handler = self._choose_name_conflict_action
         self.service.error_occurred.connect(self._show_error)
@@ -538,6 +548,15 @@ class MainWindow(QMainWindow):
         self.tray_icon.activated.connect(self._handle_tray_activation)
         if self._tray_available:
             self.tray_icon.show()
+        self.notification_manager = NotificationManager(
+            self.tray_icon,
+            self.service.get_settings,
+            self._is_main_window_foreground,
+            self.service.logger,
+        )
+
+    def _is_main_window_foreground(self) -> bool:
+        return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
 
     def _restore_from_tray(self) -> None:
         self.showNormal()
@@ -556,6 +575,7 @@ class MainWindow(QMainWindow):
         if self._application_exit_requested:
             return
         self._application_exit_requested = True
+        self.notification_manager.shutdown()
         self.service.stop()
         self.tray_icon.hide()
         QApplication.quit()
@@ -1139,6 +1159,9 @@ class MainWindow(QMainWindow):
         return not any(fragment in line for fragment in hidden_fragments)
 
     def _show_error(self, message: str) -> None:
+        if self._startup_mode and not self.isVisible():
+            self._notify_automatic_start_failed(message)
+            return
         QMessageBox.warning(self, "CleanDesk", message)
 
     def resizeEvent(self, event) -> None:
@@ -1156,11 +1179,9 @@ class MainWindow(QMainWindow):
             self.hide()
             if not self._tray_hint_shown:
                 self._tray_hint_shown = True
-                self.tray_icon.showMessage(
-                    APP_NAME,
+                self.notification_manager.notify(
                     "CleanDesk 已最小化到系统托盘。\n你可以从托盘图标重新打开窗口。",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    4000,
+                    allow_foreground=True,
                 )
             return
         event.accept()
@@ -1171,6 +1192,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._finish_initial_show)
 
     def initialize_hidden_startup(self) -> None:
+        self._startup_mode = True
         QTimer.singleShot(0, lambda: self._finish_initial_show(show_welcome=False))
 
     def _finish_initial_show(self, show_welcome: bool = True) -> None:
@@ -1218,8 +1240,54 @@ class MainWindow(QMainWindow):
                     "detail": "请先添加监控文件夹。",
                 }
             )
+            self._notify_automatic_start_failed("没有可用的监控文件夹。")
             return
         self.service.start()
+        if self._startup_mode and self.service.is_running and not self._auto_start_success_notified:
+            self._auto_start_success_notified = True
+            count = int(self.service.get_running_folder_count())
+            self.notification_manager.notify(
+                f"自动整理已启动，正在监听 {count} 个文件夹。",
+                allow_foreground=True,
+            )
+        elif self._startup_mode and not self.service.is_running:
+            self._notify_automatic_start_failed("")
+
+    def _notify_automatic_start_failed(self, reason: str) -> None:
+        if self._auto_start_failure_notified:
+            return
+        self._auto_start_failure_notified = True
+        if "没有可用" in str(reason):
+            message = "自动整理未启动，没有可用的监控文件夹。"
+        else:
+            message = "自动整理未启动，请打开 CleanDesk 查看。"
+        self.notification_manager.notify(message, allow_foreground=True)
+
+    def _notify_unavailable_folders(self, result: dict) -> None:
+        names = [str(name).strip() for name in result.get("names", []) if str(name).strip()]
+        if not names:
+            return
+        valid_count = int(result.get("valid_count", 0))
+        if self._startup_mode and not self.isVisible() and not valid_count:
+            return
+        suffix = "其他文件夹将继续整理。" if valid_count else "请打开 CleanDesk 检查。"
+        if len(names) == 1:
+            message = f"“{names[0]}”当前不可用，{suffix}"
+        else:
+            message = f"{len(names)} 个监控文件夹当前不可用，{suffix}"
+        self.notification_manager.notify(message, allow_foreground=True)
+
+    def _notify_manual_batch_completed(self, summary: dict) -> None:
+        if str(summary.get("mode", "")) != "manual":
+            return
+        moved = int(summary.get("moved", 0))
+        ignored = int(summary.get("ignored", 0))
+        skipped = int(summary.get("skipped", 0))
+        if moved or ignored or skipped:
+            message = f"整理完成：移动 {moved} 个，忽略 {ignored} 个，跳过 {skipped} 个。"
+        else:
+            message = "未发现可整理的文件。"
+        self.notification_manager.notify(message)
 
     def _card(self, horizontal: QSizePolicy.Policy, vertical: QSizePolicy.Policy) -> QFrame:
         card = QFrame()
@@ -1904,6 +1972,14 @@ class SettingsDialog(QDialog):
                 "登录 Windows 后自动启动 CleanDesk。",
             )
         )
+        self.notifications_input = QCheckBox("启用")
+        layout.addWidget(
+            self._setting_row(
+                "后台通知",
+                self.notifications_input,
+                "在整理完成、启动失败或文件夹不可用时显示通知。",
+            )
+        )
         return section
 
     def _organizing_section(self) -> QFrame:
@@ -1973,6 +2049,7 @@ class SettingsDialog(QDialog):
         self._set_combo_value(self.auto_duplicate_input, settings.get("auto_duplicate_policy", "keep_both"))
         self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
         self._set_combo_value(self.close_behavior_input, settings.get("close_behavior", "exit"))
+        self.notifications_input.setChecked(bool(settings.get("notifications_enabled", True)))
         self._launch_at_login_enabled = is_launch_at_login_enabled()
         self._launch_at_login_registered = has_launch_at_login_entry()
         self.launch_at_login_input.setChecked(self._launch_at_login_enabled)
@@ -1998,6 +2075,7 @@ class SettingsDialog(QDialog):
                     "recent_activity_limit": self.activity_limit_input.currentData(),
                     "close_behavior": self.close_behavior_input.currentData(),
                     "launch_at_login": launch_at_login,
+                    "notifications_enabled": self.notifications_input.isChecked(),
                 }
             )
         except (StartupError, OSError) as exc:

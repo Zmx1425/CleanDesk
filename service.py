@@ -52,7 +52,7 @@ class FileProcessingWorker(QThread):
     file_moved = Signal(dict)
     file_skipped = Signal(dict)
     file_ignored = Signal(dict)
-    batch_job_finished = Signal(str)
+    batch_job_finished = Signal(dict)
     conflict_requested = Signal(dict)
     conflict_hint_requested = Signal(str)
 
@@ -124,15 +124,23 @@ class FileProcessingWorker(QThread):
                 job = self.jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
+            status = "failed"
             try:
-                self._process_with_retry(job)
+                status = self._process_with_retry(job)
             finally:
                 batch_id = str(job.get("batch_id", ""))
                 if batch_id:
-                    self.batch_job_finished.emit(batch_id)
+                    self.batch_job_finished.emit(
+                        {
+                            "batch_id": batch_id,
+                            "mode": str(job.get("mode", "auto")),
+                            "status": status,
+                            "filename": Path(str(job.get("file_path", ""))).name,
+                        }
+                    )
                 self.jobs.task_done()
 
-    def _process_with_retry(self, job: dict[str, Any]) -> None:
+    def _process_with_retry(self, job: dict[str, Any]) -> str:
         file_path = str(job.get("file_path", ""))
         base_folder = str(job.get("base_folder", ""))
         rules = [dict(rule) for rule in job.get("rules", [])]
@@ -140,20 +148,20 @@ class FileProcessingWorker(QThread):
         mode = str(job.get("mode", "auto"))
         conflict_policy = str(job.get("conflict_policy", "keep_both"))
         if batch_id and batch_id in self.canceled_batches:
-            return
+            return "canceled"
         path = Path(file_path)
         delays = [0.4, 0.8, 1.2, 2.0]
 
         for attempt, delay in enumerate([0.0, *delays], start=1):
             if self.stop_requested.is_set():
-                return
+                return "stopped"
             if delay:
                 time.sleep(delay)
 
             if not path.exists():
-                return
+                return "unavailable"
             if not path.is_file() or path.parent != Path(base_folder):
-                return
+                return "unavailable"
             matched_rule = find_matching_rule(path, rules)
             if matched_rule and matched_rule.get("action", "move") == "ignore":
                 self.file_ignored.emit(
@@ -166,18 +174,18 @@ class FileProcessingWorker(QThread):
                         "source_root": str(job.get("source_root", base_folder)),
                     }
                 )
-                return
+                return "ignored"
             if is_hidden_or_temp_file(path):
                 self.logger.info("Queued file skipped because it is temporary or hidden: %s", path.name)
-                return
+                return "temporary"
             if not matched_rule:
-                self.engine.process_file(str(path), base_folder, rules)
-                return
+                return str(self.engine.process_file_result(str(path), base_folder, rules).get("status", "no_match"))
             status = self._process_and_emit_move(path, base_folder, rules, batch_id, matched_rule, mode, conflict_policy, job)
             if status in {"moved", "conflict_skipped", "canceled", "no_match", "ignored"}:
-                return
+                return status
             if attempt < len(delays) + 1:
                 self.logger.info("File still unavailable, retrying: %s", path.name)
+        return "failed"
 
     def _process_and_emit_move(
         self,
@@ -210,6 +218,7 @@ class FileProcessingWorker(QThread):
                     "folder_id": str(job.get("folder_id", "")),
                     "folder_name": str(job.get("folder_name", "")),
                     "source_root": str(job.get("source_root", base_folder)),
+                    "mode": mode,
                 }
             )
             return status
@@ -286,6 +295,9 @@ class CleanDeskService(QObject):
     conflict_hint_requested = Signal(str)
     error_occurred = Signal(str)
     settings_changed = Signal(dict)
+    folders_unavailable = Signal(dict)
+    auto_duplicate_skipped = Signal(str)
+    batch_completed = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -439,7 +451,7 @@ class CleanDeskService(QObject):
         self.logger.info("正在启动监听")
         batch_id = ""
         if self.settings.get("scan_existing_on_start", True):
-            batch_id = self._create_pending_batch()
+            batch_id = self._create_pending_batch("start_scan")
             queued = self._queue_existing_files_for_folders(batch_id, valid_folders, mode="start_scan")
             if queued:
                 self.logger.info("启动前扫描：发现 %s 个已有文件", queued)
@@ -475,10 +487,10 @@ class CleanDeskService(QObject):
         if not self._ensure_folder_ready():
             return
         self.logger.info("Manual scan started")
-        batch_id = self._create_pending_batch()
+        batch_id = self._create_pending_batch("manual")
         queued = self._queue_existing_files(batch_id)
         if not queued:
-            self.pending_undo_batches.pop(batch_id, None)
+            self._finish_empty_batch(batch_id)
         self.logger.info("Manual scan queued, %s file(s) found", queued)
 
     @Slot(object)
@@ -495,7 +507,7 @@ class CleanDeskService(QObject):
             return
         if self._should_ignore_file_event(file_path):
             return
-        batch_id = self._create_pending_batch()
+        batch_id = self._create_pending_batch("auto")
         self._set_pending_batch_total(batch_id, 1)
         if self.worker.enqueue(
             file_path,
@@ -549,7 +561,14 @@ class CleanDeskService(QObject):
             ):
                 queued += 1
             else:
-                self._finish_batch_job(batch_id)
+                self._finish_batch_job(
+                    {
+                        "batch_id": batch_id,
+                        "mode": mode,
+                        "status": "unavailable",
+                        "filename": item.name,
+                    }
+                )
         return queued
 
     def add_rule(self, rule: dict[str, Any]) -> None:
@@ -900,6 +919,7 @@ class CleanDeskService(QObject):
 
     def _valid_monitored_folders(self, emit_activity: bool = False) -> list[dict[str, Any]]:
         valid_folders = []
+        unavailable_names = []
         for folder in self.monitored_folders:
             prepared = dict(folder)
             path_text = str(prepared.get("path", ""))
@@ -912,6 +932,7 @@ class CleanDeskService(QObject):
                 continue
 
             self.logger.warning("Monitored folder skipped because it is unavailable: %s", path_text)
+            unavailable_names.append(display_name)
             if emit_activity:
                 self.activity_emitted.emit(
                     {
@@ -923,6 +944,13 @@ class CleanDeskService(QObject):
                         "source_root": path_text,
                     }
                 )
+        if unavailable_names:
+            self.folders_unavailable.emit(
+                {
+                    "names": unavailable_names,
+                    "valid_count": len(valid_folders),
+                }
+            )
         return valid_folders
 
     def _event_payload(self, event: object) -> dict[str, str]:
@@ -984,10 +1012,33 @@ class CleanDeskService(QObject):
 
         return normalized_path
 
-    def _create_pending_batch(self) -> str:
+    def _create_pending_batch(self, mode: str = "") -> str:
         batch_id = uuid4().hex
-        self.pending_undo_batches[batch_id] = {"timestamp": timestamp(), "items": [], "remaining": 0}
+        self.pending_undo_batches[batch_id] = {
+            "timestamp": timestamp(),
+            "items": [],
+            "remaining": 0,
+            "mode": mode,
+            "counts": {},
+        }
         return batch_id
+
+    def _finish_empty_batch(self, batch_id: str) -> None:
+        finished = self.pending_undo_batches.pop(batch_id, None)
+        if finished:
+            self._emit_batch_completed(finished)
+
+    def _emit_batch_completed(self, batch: dict) -> None:
+        counts = dict(batch.get("counts", {}))
+        self.batch_completed.emit(
+            {
+                "mode": str(batch.get("mode", "")),
+                "total": sum(int(value) for value in counts.values()),
+                "moved": int(counts.get("moved", 0)),
+                "ignored": int(counts.get("ignored", 0)),
+                "skipped": int(counts.get("conflict_skipped", 0)),
+            }
+        )
 
     def _set_pending_batch_total(self, batch_id: str, total: int) -> None:
         batch = self.pending_undo_batches.get(batch_id)
@@ -1040,6 +1091,8 @@ class CleanDeskService(QObject):
                 "source_root": str(skip.get("source_root", "")),
             }
         )
+        if str(skip.get("mode", "")) == "auto":
+            self.auto_duplicate_skipped.emit(str(skip.get("filename", "文件")))
 
     @Slot(dict)
     def _record_ignored_file(self, ignored: dict) -> None:
@@ -1056,22 +1109,28 @@ class CleanDeskService(QObject):
             }
         )
 
-    @Slot(str)
-    def _finish_batch_job(self, batch_id: str) -> None:
+    @Slot(dict)
+    def _finish_batch_job(self, result: dict) -> None:
+        batch_id = str(result.get("batch_id", ""))
         batch = self.pending_undo_batches.get(batch_id)
         if not batch:
             return
+        status = str(result.get("status", "failed"))
+        counts = batch.setdefault("counts", {})
+        counts[status] = int(counts.get(status, 0)) + 1
         batch["remaining"] = max(0, int(batch.get("remaining", 0)) - 1)
         if batch["remaining"] > 0:
             return
 
         finished = self.pending_undo_batches.pop(batch_id, None)
         self.worker.canceled_batches.discard(batch_id)
-        if not finished or not finished.get("items"):
+        if not finished:
             return
-        self.undo_stack.append({"timestamp": finished["timestamp"], "items": list(finished["items"])})
-        self.undo_stack = self.undo_stack[-10:]
-        self.undo_state_changed.emit(True)
+        self._emit_batch_completed(finished)
+        if finished.get("items"):
+            self.undo_stack.append({"timestamp": finished["timestamp"], "items": list(finished["items"])})
+            self.undo_stack = self.undo_stack[-10:]
+            self.undo_state_changed.emit(True)
 
     @Slot(str)
     def _remember_log_line(self, line: str) -> None:

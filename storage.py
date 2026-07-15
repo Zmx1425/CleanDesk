@@ -14,13 +14,14 @@ DEFAULT_SETTINGS = {
     "recent_activity_limit": 50,
     "close_behavior": "exit",
     "launch_at_login": False,
+    "notifications_enabled": True,
 }
 
 
 def normalize_settings(settings: object) -> dict:
     raw = dict(settings) if isinstance(settings, dict) else {}
     normalized = dict(raw)
-    for key in ("auto_start_organizing", "scan_existing_on_start", "launch_at_login"):
+    for key in ("auto_start_organizing", "scan_existing_on_start", "launch_at_login", "notifications_enabled"):
         value = raw.get(key, DEFAULT_SETTINGS[key])
         normalized[key] = value if isinstance(value, bool) else DEFAULT_SETTINGS[key]
 
