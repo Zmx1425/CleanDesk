@@ -2472,10 +2472,13 @@ class SmartSuggestionDialog(QDialog):
         suggestions = list(self.summary.get("suggestions", []))
         if suggestions:
             scroll = QScrollArea()
+            scroll.setObjectName("smartSuggestionScrollArea")
+            scroll.viewport().setObjectName("smartSuggestionViewport")
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             content = QWidget()
+            content.setObjectName("smartSuggestionContent")
             content_layout = QVBoxLayout(content)
             content_layout.setContentsMargins(0, 0, 0, 0)
             content_layout.setSpacing(10)

@@ -111,9 +111,17 @@ class ThemeManager:
             }}
             QScrollArea#settingsScrollArea,
             QWidget#settingsViewport,
-            QWidget#settingsPage {{
+            QWidget#settingsPage,
+            QScrollArea#smartSuggestionScrollArea,
+            QWidget#smartSuggestionViewport,
+            QWidget#smartSuggestionContent {{
                 background: {palette["window_background"]};
                 border: none;
+            }}
+            QFrame#suggestionItem {{
+                background: {palette["surface_background"]};
+                border: 1px solid {palette["border"]};
+                border-radius: 8px;
             }}
             QDialog QLabel,
             QMessageBox QLabel,
