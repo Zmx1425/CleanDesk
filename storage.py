@@ -15,6 +15,7 @@ DEFAULT_SETTINGS = {
     "close_behavior": "exit",
     "launch_at_login": False,
     "notifications_enabled": True,
+    "theme": "light",
 }
 
 
@@ -36,6 +37,9 @@ def normalize_settings(settings: object) -> dict:
 
     close_behavior = raw.get("close_behavior", DEFAULT_SETTINGS["close_behavior"])
     normalized["close_behavior"] = close_behavior if close_behavior in {"exit", "minimize_to_tray"} else "exit"
+
+    theme = raw.get("theme", DEFAULT_SETTINGS["theme"])
+    normalized["theme"] = theme if isinstance(theme, str) and theme in {"light", "dark"} else "light"
     return normalized
 
 

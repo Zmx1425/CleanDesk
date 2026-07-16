@@ -44,6 +44,7 @@ from notifications import (
     NotificationManager,
 )
 from startup import StartupError, has_launch_at_login_entry, is_launch_at_login_enabled, set_launch_at_login_enabled
+from theme import ThemeManager
 
 
 BREAKPOINT_WIDTH = 1100
@@ -81,6 +82,8 @@ class MainWindow(QMainWindow):
         self._startup_mode = False
         self._auto_start_success_notified = False
         self._auto_start_failure_notified = False
+        settings = self.service.get_settings() if hasattr(self.service, "get_settings") else {}
+        self.theme_manager = ThemeManager(settings.get("theme", "light"), self.service.update_settings)
 
         self.path_label = QLabel()
         self.folder_title_label = QLabel()
@@ -1352,7 +1355,7 @@ class MainWindow(QMainWindow):
         shadow = QGraphicsDropShadowEffect(card)
         shadow.setBlurRadius(18)
         shadow.setOffset(0, 6)
-        shadow.setColor(QColor(20, 24, 31, 14))
+        shadow.setColor(QColor(*self.theme_manager.palette["shadow_rgba"]))
         card.setGraphicsEffect(shadow)
         return card
 
@@ -1385,7 +1388,8 @@ class MainWindow(QMainWindow):
     def _apply_style(self) -> None:
         app_font = QFont(QApplication.font().family(), 10)
         self.setFont(app_font)
-        self.setStyleSheet(
+        self.theme_manager.apply_theme(
+            self,
             """
             QScrollArea#scrollArea {
                 background: #F6F7F9;
@@ -1667,18 +1671,18 @@ class MainWindow(QMainWindow):
                 padding: 8px 10px;
             }
             QTextEdit#logView {
-                background: #111827;
+                background: #111827; /* theme:log_background */
                 border: 1px solid #1F2937;
                 border-radius: 10px;
                 padding: 10px;
-                color: #E5E7EB;
+                color: #E5E7EB; /* theme:log_text */
                 font-family: Consolas, Menlo, monospace;
                 font-size: 12px;
                 selection-background-color: #2563EB;
             }
             QLineEdit,
             QComboBox {
-                background: #FFFFFF;
+                background: #FFFFFF; /* theme:input_background */
                 border: 1px solid #E5E7EB;
                 border-radius: 10px;
                 padding: 0 12px;
@@ -1703,7 +1707,7 @@ class MainWindow(QMainWindow):
                 min-width: 80px;
                 min-height: 36px;
             }
-            """
+            """,
         )
 
 
