@@ -1,2 +1,2 @@
 APP_NAME = "CleanDesk"
-APP_VERSION = "0.6.1-beta"
+APP_VERSION = "0.7.0-beta"
