@@ -1412,6 +1412,7 @@ class MainWindow(QMainWindow):
                 color: #111827;
             }
             QLabel#appTitle {
+                color: #111827;
                 font-size: 28px;
                 font-weight: 700;
                 letter-spacing: 0px;
