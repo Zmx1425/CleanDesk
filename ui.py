@@ -602,12 +602,24 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def _show_settings(self) -> None:
-        SettingsDialog(
+        dialog = SettingsDialog(
             self,
             self.service,
             self._clear_recent_activity,
             self._send_test_notification,
-        ).exec()
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self._apply_saved_theme()
+
+    def _apply_saved_theme(self) -> None:
+        settings = self.service.get_settings() if hasattr(self.service, "get_settings") else {}
+        self.theme_manager.set_current_theme(settings.get("theme", "light"))
+        self._apply_style()
+        shadow_color = QColor(*self.theme_manager.palette["shadow_rgba"])
+        for frame in self.findChildren(QFrame):
+            effect = frame.graphicsEffect()
+            if isinstance(effect, QGraphicsDropShadowEffect):
+                effect.setColor(shadow_color)
 
     def _send_test_notification(self) -> str:
         return self.notification_manager.notify(
@@ -1500,14 +1512,14 @@ class MainWindow(QMainWindow):
             }
             QPushButton#primaryButton {
                 background: #2563EB;
-                color: #FFFFFF;
+                color: #FFFFFF; /* theme:button_on_primary */
             }
             QPushButton#primaryButton:hover {
                 background: #1D4ED8;
             }
             QPushButton#dangerButton {
                 background: #EF4444;
-                color: #FFFFFF;
+                color: #FFFFFF; /* theme:button_on_primary */
             }
             QPushButton#dangerButton:hover {
                 background: #DC2626;
@@ -1920,15 +1932,19 @@ class SettingsDialog(QDialog):
         outer_layout.setSpacing(0)
 
         scroll = QScrollArea()
+        scroll.setObjectName("settingsScrollArea")
+        scroll.viewport().setObjectName("settingsViewport")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.NoFrame)
         page = QWidget()
+        page.setObjectName("settingsPage")
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(20, 20, 20, 16)
         page_layout.setSpacing(12)
 
         page_layout.addWidget(self._general_section())
+        page_layout.addWidget(self._appearance_section())
         page_layout.addWidget(self._organizing_section())
         page_layout.addWidget(self._activity_section())
         page_layout.addWidget(self._about_section())
@@ -2075,6 +2091,20 @@ class SettingsDialog(QDialog):
         )
         return section
 
+    def _appearance_section(self) -> QFrame:
+        section, layout = self._section("外观")
+        self.theme_input = QComboBox()
+        self.theme_input.addItem("浅色模式", "light")
+        self.theme_input.addItem("深色模式", "dark")
+        layout.addWidget(
+            self._setting_row(
+                "主题模式",
+                self.theme_input,
+                "选择 CleanDesk 的界面显示模式。",
+            )
+        )
+        return section
+
     def _activity_section(self) -> QFrame:
         section, layout = self._section("最近活动")
         self.activity_limit_input = QComboBox()
@@ -2117,6 +2147,7 @@ class SettingsDialog(QDialog):
         self._set_combo_value(self.auto_duplicate_input, settings.get("auto_duplicate_policy", "keep_both"))
         self._set_combo_value(self.activity_limit_input, settings.get("recent_activity_limit", 50))
         self._set_combo_value(self.close_behavior_input, settings.get("close_behavior", "exit"))
+        self._set_combo_value(self.theme_input, settings.get("theme", "light"))
         self.notifications_input.setChecked(bool(settings.get("notifications_enabled", True)))
         self._launch_at_login_enabled = is_launch_at_login_enabled()
         self._launch_at_login_registered = has_launch_at_login_entry()
@@ -2144,6 +2175,7 @@ class SettingsDialog(QDialog):
                     "close_behavior": self.close_behavior_input.currentData(),
                     "launch_at_login": launch_at_login,
                     "notifications_enabled": self.notifications_input.isChecked(),
+                    "theme": self.theme_input.currentData(),
                 }
             )
         except (StartupError, OSError) as exc:

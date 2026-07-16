@@ -14,6 +14,7 @@ LIGHT_THEME = {
     "border_muted": "#EEF0F3",
     "button_primary": "#2563EB",
     "button_primary_hover": "#1D4ED8",
+    "button_on_primary": "#FFFFFF",
     "button_primary_soft": "#EEF4FF",
     "button_primary_soft_strong": "#E8F0FF",
     "button_primary_border": "#BFDBFE",

@@ -14,6 +14,7 @@ DARK_THEME = {
     "border_muted": "#30353D",
     "button_primary": "#3B82F6",
     "button_primary_hover": "#2563EB",
+    "button_on_primary": "#FFFFFF",
     "button_primary_soft": "#1E3A5F",
     "button_primary_soft_strong": "#1D3657",
     "button_primary_border": "#315F91",

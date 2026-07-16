@@ -78,7 +78,109 @@ class ThemeManager:
             themed_style_sheet = themed_style_sheet.replace(marker, dark_value)
         for marker, dark_value in protected_tokens.items():
             themed_style_sheet = themed_style_sheet.replace(marker, dark_value)
-        return themed_style_sheet
+        return f"{themed_style_sheet}\n{self._dark_control_overrides()}"
+
+    def _dark_control_overrides(self) -> str:
+        palette = THEMES["dark"]
+        return f"""
+            QMenuBar {{
+                background: {palette["card_background"]};
+                color: {palette["text_primary"]};
+            }}
+            QMenuBar::item:selected,
+            QMenuBar::item:pressed {{
+                background: {palette["button_secondary"]};
+            }}
+            QMenu {{
+                background: {palette["card_background"]};
+                color: {palette["text_primary"]};
+                border: 1px solid {palette["border"]};
+                padding: 5px;
+            }}
+            QMenu::item {{
+                padding: 7px 24px 7px 10px;
+                border-radius: 6px;
+            }}
+            QMenu::item:selected {{
+                background: {palette["button_secondary"]};
+            }}
+            QDialog,
+            QMessageBox {{
+                background: {palette["window_background"]};
+                color: {palette["text_primary"]};
+            }}
+            QScrollArea#settingsScrollArea,
+            QWidget#settingsViewport,
+            QWidget#settingsPage {{
+                background: {palette["window_background"]};
+                border: none;
+            }}
+            QDialog QLabel,
+            QMessageBox QLabel,
+            QCheckBox,
+            QGroupBox {{
+                color: {palette["text_body"]};
+            }}
+            QMessageBox QPushButton,
+            QDialogButtonBox QPushButton {{
+                background: {palette["button_secondary"]};
+                color: {palette["text_body"]};
+                border: 1px solid {palette["border"]};
+            }}
+            QMessageBox QPushButton:hover,
+            QDialogButtonBox QPushButton:hover {{
+                background: {palette["border"]};
+            }}
+            QComboBox QAbstractItemView {{
+                background: {palette["surface_background"]};
+                color: {palette["text_primary"]};
+                border: 1px solid {palette["border"]};
+                selection-background-color: {palette["button_primary"]};
+                selection-color: {palette["button_on_primary"]};
+                outline: none;
+            }}
+            QLineEdit:disabled,
+            QComboBox:disabled {{
+                background: {palette["button_secondary"]};
+                color: {palette["text_disabled"]};
+            }}
+            QScrollBar:vertical {{
+                background: {palette["window_background"]};
+                width: 12px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {palette["text_muted"]};
+                border-radius: 4px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {palette["text_secondary"]};
+            }}
+            QScrollBar:horizontal {{
+                background: {palette["window_background"]};
+                height: 12px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {palette["text_muted"]};
+                border-radius: 4px;
+                min-width: 28px;
+            }}
+            QScrollBar::add-line,
+            QScrollBar::sub-line,
+            QScrollBar::add-page,
+            QScrollBar::sub-page {{
+                background: transparent;
+                border: none;
+            }}
+            QToolTip {{
+                background: {palette["card_background"]};
+                color: {palette["text_primary"]};
+                border: 1px solid {palette["border"]};
+                padding: 5px;
+            }}
+        """
 
     def apply_theme(self, widget: Any, light_style_sheet: str) -> None:
         widget.setStyleSheet(self.build_style_sheet(light_style_sheet))
