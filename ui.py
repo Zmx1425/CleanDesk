@@ -35,14 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from version import APP_NAME, APP_VERSION
-from notifications import (
-    NOTIFICATION_DISABLED,
-    NOTIFICATION_FAILED,
-    NOTIFICATION_SHOWN,
-    NOTIFICATION_TRAY_UNAVAILABLE,
-    NOTIFICATION_UNSUPPORTED,
-    NotificationManager,
-)
+from notifications import NotificationManager
 from startup import StartupError, has_launch_at_login_entry, is_launch_at_login_enabled, set_launch_at_login_enabled
 from theme import ThemeManager
 
@@ -606,7 +599,6 @@ class MainWindow(QMainWindow):
             self,
             self.service,
             self._clear_recent_activity,
-            self._send_test_notification,
         )
         if dialog.exec() == QDialog.Accepted:
             self._apply_saved_theme()
@@ -620,13 +612,6 @@ class MainWindow(QMainWindow):
             effect = frame.graphicsEffect()
             if isinstance(effect, QGraphicsDropShadowEffect):
                 effect.setColor(shadow_color)
-
-    def _send_test_notification(self) -> str:
-        return self.notification_manager.notify(
-            "这是一条测试通知。",
-            allow_foreground=True,
-            bypass_enabled=True,
-        )
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -1919,11 +1904,10 @@ class ActivityListItem(QWidget):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, service, clear_activity_callback, test_notification_callback=None):
+    def __init__(self, parent, service, clear_activity_callback):
         super().__init__(parent)
         self.service = service
         self.clear_activity_callback = clear_activity_callback
-        self.test_notification_callback = test_notification_callback
         self.setWindowTitle("设置")
         self.setMinimumSize(640, 600)
         self.resize(680, 640)
@@ -2048,20 +2032,10 @@ class SettingsDialog(QDialog):
             )
         )
         self.notifications_input = QCheckBox("启用")
-        notification_controls = QWidget()
-        notification_controls_layout = QHBoxLayout(notification_controls)
-        notification_controls_layout.setContentsMargins(0, 0, 0, 0)
-        notification_controls_layout.setSpacing(8)
-        notification_controls_layout.addWidget(self.notifications_input)
-        test_notification_button = QPushButton("发送测试通知")
-        test_notification_button.setObjectName("secondaryButton")
-        test_notification_button.setFixedHeight(32)
-        test_notification_button.clicked.connect(self._send_test_notification)
-        notification_controls_layout.addWidget(test_notification_button)
         layout.addWidget(
             self._setting_row(
                 "后台通知",
-                notification_controls,
+                self.notifications_input,
                 "在整理完成、启动失败或文件夹不可用时显示通知。",
             )
         )
@@ -2188,24 +2162,6 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "无法保存开机启动设置", str(exc) or "请稍后重试。")
             return
         self.accept()
-
-    def _send_test_notification(self) -> None:
-        if not self.notifications_input.isChecked():
-            QMessageBox.information(self, "后台通知", "请先启用后台通知。")
-            return
-        try:
-            result = self.test_notification_callback() if callable(self.test_notification_callback) else NOTIFICATION_FAILED
-        except Exception:
-            result = NOTIFICATION_FAILED
-        if result == NOTIFICATION_SHOWN:
-            return
-        messages = {
-            NOTIFICATION_DISABLED: "请先启用后台通知。",
-            NOTIFICATION_TRAY_UNAVAILABLE: "系统托盘当前不可用，无法显示通知。",
-            NOTIFICATION_UNSUPPORTED: "当前系统环境不支持托盘通知。",
-            NOTIFICATION_FAILED: "测试通知发送失败，请稍后重试。",
-        }
-        QMessageBox.warning(self, "后台通知", messages.get(result, "测试通知发送失败，请稍后重试。"))
 
     def _confirm_clear_activity(self) -> None:
         box = QMessageBox(self)
