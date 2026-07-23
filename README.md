@@ -2,9 +2,25 @@
 
 CleanDesk 是一个本地自动整理指定文件夹中文件的桌面工具。
 
-当前版本：0.7.1-beta
+当前版本：0.7.2-beta
 
 开发者：Zmx
+
+## CleanDesk 0.7.2-beta
+
+本版本新增面向普通用户的 Windows 安装程序，支持当前用户安装、开始菜单快捷方式、可选桌面快捷方式和标准卸载，同时继续提供免安装便携版。
+
+### 下载选择
+
+推荐下载：`CleanDesk_0.7.2-beta_Setup.exe`
+
+双击安装程序，根据简体中文提示完成安装。安装默认位于当前用户的 LocalAppData，不需要管理员权限。
+
+便携版：`CleanDesk_0.7.2-beta_Windows.zip`
+
+无需安装，解压完整文件夹后运行 `CleanDesk.exe`。
+
+GitHub 自动生成的 Source code 压缩包只面向开发者，普通用户不要下载。
 
 ## CleanDesk 0.7.1-beta
 
@@ -198,8 +214,15 @@ python main.py
 build_windows.bat
 ```
 
+开发者构建 Windows 安装程序：
+
+```powershell
+build_installer.bat
+```
+
 普通用户运行：
 
 ```text
-dist\CleanDesk\CleanDesk.exe
+安装版：从开始菜单打开 CleanDesk
+便携版：解压后运行 CleanDesk\CleanDesk.exe
 ```

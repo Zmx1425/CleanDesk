@@ -11,3 +11,4 @@ CleanDesk_*_Test*/
 archive/
 release/
 releases/*/*.zip
+releases/*/*.exe
