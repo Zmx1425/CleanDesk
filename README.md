@@ -226,3 +226,13 @@ build_installer.bat
 安装版：从开始菜单打开 CleanDesk
 便携版：解压后运行 CleanDesk\CleanDesk.exe
 ```
+
+## 关于这个项目
+
+这是我的第一个个人项目。
+
+CleanDesk 主要借助 Codex 完成开发，我自己也修改和调整了部分代码。
+
+作为一个仍在不断完善的 Beta 项目，它可能还不够成熟，但我希望它能帮你省下一些力气。
+
+祝你使用愉快！XD
