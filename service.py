@@ -12,6 +12,12 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from engine import FileOrganizerEngine
+from event_sources import (
+    START_SCAN_NOTIFICATION_SOURCE,
+    START_SCAN_PROCESSING_MODE,
+    WATCHER_NOTIFICATION_SOURCE,
+    WATCHER_PROCESSING_MODE,
+)
 from rules import assign_rule_priorities, display_rule_name, find_matching_rule, normalize_rules, sort_rules
 from storage import ConfigStorage, DEFAULT_SETTINGS, normalize_settings
 from utils import (
@@ -298,6 +304,7 @@ class CleanDeskService(QObject):
     folders_unavailable = Signal(dict)
     auto_duplicate_skipped = Signal(str)
     watcher_file_moved = Signal(dict)
+    start_scan_file_moved = Signal(dict)
     batch_completed = Signal(dict)
 
     def __init__(self) -> None:
@@ -508,6 +515,12 @@ class CleanDeskService(QObject):
             return
         if self._should_ignore_file_event(file_path):
             return
+        self.logger.info(
+            "[BackgroundNotify] watcher event detected source=%s mode=%s folder=%s",
+            WATCHER_NOTIFICATION_SOURCE,
+            WATCHER_PROCESSING_MODE,
+            folder_name or "监控文件夹",
+        )
         batch_id = self._create_pending_batch("auto")
         self._set_pending_batch_total(batch_id, 1)
         if self.worker.enqueue(
@@ -515,7 +528,7 @@ class CleanDeskService(QObject):
             source_root,
             self.rules,
             batch_id,
-            mode="auto",
+            mode=WATCHER_PROCESSING_MODE,
             folder_id=folder_id,
             folder_name=folder_name,
             conflict_policy=self._duplicate_policy_for_mode("auto"),
@@ -1079,10 +1092,34 @@ class CleanDeskService(QObject):
                 "source_root": item["source_root"],
             }
         )
-        if str(move.get("mode", "")) == "auto":
+        mode = str(move.get("mode", ""))
+        if mode == WATCHER_PROCESSING_MODE:
+            self.logger.info(
+                "[BackgroundNotify] watcher move success source=%s mode=%s folder=%s",
+                WATCHER_NOTIFICATION_SOURCE,
+                mode,
+                item["folder_name"] or "监控文件夹",
+            )
             self.watcher_file_moved.emit(
                 {
-                    "source": "watcher",
+                    "source": WATCHER_NOTIFICATION_SOURCE,
+                    "mode": mode,
+                    "folder_id": item["folder_id"],
+                    "folder_name": item["folder_name"],
+                    "source_root": item["source_root"],
+                }
+            )
+        elif mode == START_SCAN_PROCESSING_MODE:
+            self.logger.info(
+                "[BackgroundNotify] start scan move success source=%s mode=%s folder=%s",
+                START_SCAN_NOTIFICATION_SOURCE,
+                mode,
+                item["folder_name"] or "监控文件夹",
+            )
+            self.start_scan_file_moved.emit(
+                {
+                    "source": START_SCAN_NOTIFICATION_SOURCE,
+                    "mode": mode,
                     "folder_id": item["folder_id"],
                     "folder_name": item["folder_name"],
                     "source_root": item["source_root"],

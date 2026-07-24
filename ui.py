@@ -2,7 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self._status_hint_token = 0
         self._updating_rules = False
         self._tray_hint_shown = False
+        self._tray_mode_active = False
         self._application_exit_requested = False
         self._startup_mode = False
         self._auto_start_success_notified = False
@@ -514,7 +515,11 @@ class MainWindow(QMainWindow):
         if hasattr(self.service, "auto_duplicate_skipped"):
             self.service.auto_duplicate_skipped.connect(self.notification_manager.aggregate_duplicate_skip)
         if hasattr(self.service, "watcher_file_moved"):
-            self.service.watcher_file_moved.connect(self.notification_manager.aggregate_background_organized)
+            self.service.watcher_file_moved.connect(self._handle_background_file_moved)
+            self.service.logger.info("[BackgroundNotify] watcher success signal connected")
+        if hasattr(self.service, "start_scan_file_moved"):
+            self.service.start_scan_file_moved.connect(self._handle_background_file_moved)
+            self.service.logger.info("[BackgroundNotify] start scan success signal connected")
         if hasattr(self.service, "conflict_choice_handler"):
             self.service.conflict_choice_handler = self._choose_name_conflict_action
         self.service.error_occurred.connect(self._show_error)
@@ -575,9 +580,29 @@ class MainWindow(QMainWindow):
         return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
 
     def _is_main_window_background(self) -> bool:
-        return not self.isVisible() or self.isMinimized()
+        visible = self.isVisible()
+        minimized = self.isMinimized()
+        tray_mode = self._tray_mode_active
+        active = QApplication.activeWindow() is self
+        background = not visible or minimized or tray_mode
+        self.service.logger.info("[BackgroundNotify] window visible=%s", visible)
+        self.service.logger.info("[BackgroundNotify] window minimized=%s", minimized)
+        self.service.logger.info("[BackgroundNotify] tray mode=%s", tray_mode)
+        self.service.logger.info("[BackgroundNotify] active window=%s", active)
+        self.service.logger.info("[BackgroundNotify] background=%s", background)
+        return background
+
+    @Slot(dict)
+    def _handle_background_file_moved(self, result: dict) -> None:
+        self.service.logger.info(
+            "[BackgroundNotify] UI slot received source=%s mode=%s",
+            str(result.get("source", "")) or "<empty>",
+            str(result.get("mode", "")) or "<empty>",
+        )
+        self.notification_manager.aggregate_background_organized(result)
 
     def _restore_from_tray(self) -> None:
+        self._tray_mode_active = False
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -1211,6 +1236,7 @@ class MainWindow(QMainWindow):
             and self._tray_available
         ):
             event.ignore()
+            self._tray_mode_active = True
             self.hide()
             if not self._tray_hint_shown:
                 self._tray_hint_shown = True
@@ -1228,6 +1254,7 @@ class MainWindow(QMainWindow):
 
     def initialize_hidden_startup(self) -> None:
         self._startup_mode = True
+        self._tray_mode_active = True
         QTimer.singleShot(0, lambda: self._finish_initial_show(show_welcome=False))
 
     def _finish_initial_show(self, show_welcome: bool = True) -> None:
