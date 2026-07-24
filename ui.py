@@ -508,12 +508,13 @@ class MainWindow(QMainWindow):
             self.service.conflict_hint_requested.connect(self._show_temporary_status_hint)
         if hasattr(self.service, "settings_changed"):
             self.service.settings_changed.connect(self._apply_activity_limit)
+            self.service.settings_changed.connect(self.notification_manager.handle_settings_changed)
         if hasattr(self.service, "folders_unavailable"):
             self.service.folders_unavailable.connect(self._notify_unavailable_folders)
         if hasattr(self.service, "auto_duplicate_skipped"):
             self.service.auto_duplicate_skipped.connect(self.notification_manager.aggregate_duplicate_skip)
-        if hasattr(self.service, "batch_completed"):
-            self.service.batch_completed.connect(self._notify_manual_batch_completed)
+        if hasattr(self.service, "watcher_file_moved"):
+            self.service.watcher_file_moved.connect(self.notification_manager.aggregate_background_organized)
         if hasattr(self.service, "conflict_choice_handler"):
             self.service.conflict_choice_handler = self._choose_name_conflict_action
         self.service.error_occurred.connect(self._show_error)
@@ -567,10 +568,14 @@ class MainWindow(QMainWindow):
             self.service.get_settings,
             self._is_main_window_foreground,
             self.service.logger,
+            background_provider=self._is_main_window_background,
         )
 
     def _is_main_window_foreground(self) -> bool:
         return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
+
+    def _is_main_window_background(self) -> bool:
+        return not self.isVisible() or self.isMinimized()
 
     def _restore_from_tray(self) -> None:
         self.showNormal()
@@ -1309,38 +1314,6 @@ class MainWindow(QMainWindow):
         else:
             message = f"{len(names)} 个监控文件夹当前不可用，{suffix}"
         self.notification_manager.notify(message, allow_foreground=True)
-
-    def _notify_manual_batch_completed(self, summary: dict) -> None:
-        if str(summary.get("mode", "")) != "manual":
-            return
-        active_folder = self.service.get_active_folder() or {}
-        folder_path = str(active_folder.get("path", "")).strip()
-        folder_name = str(active_folder.get("display_name", "")).strip()
-        if not folder_name and folder_path:
-            folder_name = Path(folder_path).name
-        folder_name = folder_name or "当前文件夹"
-
-        moved = int(summary.get("moved", 0))
-        ignored = int(summary.get("ignored", 0))
-        skipped = int(summary.get("skipped", 0))
-        if not (moved or ignored or skipped):
-            message = f"{folder_name} 暂无需要整理的文件。"
-        elif moved and not skipped and not ignored:
-            message = f"{folder_name} 整理完成：已整理 {moved} 个文件。"
-        elif skipped and not moved and not ignored:
-            message = f"{folder_name} 整理完成：{skipped} 个文件因名称重复被跳过。"
-        elif ignored and not moved and not skipped:
-            message = f"{folder_name} 整理完成：{ignored} 个文件已按规则忽略。"
-        else:
-            parts = []
-            if moved:
-                parts.append(f"已整理 {moved} 个")
-            if skipped:
-                parts.append(f"跳过 {skipped} 个")
-            if ignored:
-                parts.append(f"忽略 {ignored} 个")
-            message = f"{folder_name} 整理完成：{'，'.join(parts)}。"
-        self.notification_manager.notify(message)
 
     def _card(self, horizontal: QSizePolicy.Policy, vertical: QSizePolicy.Policy) -> QFrame:
         card = QFrame()

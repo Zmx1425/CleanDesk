@@ -297,6 +297,7 @@ class CleanDeskService(QObject):
     settings_changed = Signal(dict)
     folders_unavailable = Signal(dict)
     auto_duplicate_skipped = Signal(str)
+    watcher_file_moved = Signal(dict)
     batch_completed = Signal(dict)
 
     def __init__(self) -> None:
@@ -1078,6 +1079,15 @@ class CleanDeskService(QObject):
                 "source_root": item["source_root"],
             }
         )
+        if str(move.get("mode", "")) == "auto":
+            self.watcher_file_moved.emit(
+                {
+                    "source": "watcher",
+                    "folder_id": item["folder_id"],
+                    "folder_name": item["folder_name"],
+                    "source_root": item["source_root"],
+                }
+            )
 
     @Slot(dict)
     def _record_skipped_file(self, skip: dict) -> None:
